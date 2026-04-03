@@ -42,6 +42,7 @@ async function main() {
           tools: [
             "check_login_status",
             "get_login_qrcode",
+            "login_flow",
             "list_shops",
             "select_shop",
             "get_user_token",
@@ -53,6 +54,8 @@ async function main() {
         return printJson(await checkLoginStatus(args));
       case "get_login_qrcode":
         return printJson(await getLoginQrcode(args));
+      case "login_flow":
+        return printJson(await loginFlow(args));
       case "list_shops":
         return printJson(await listShops(args));
       case "select_shop":
@@ -412,6 +415,92 @@ async function getLoginQrcode(args) {
     qrcodePath: QR_IMAGE_FILE,
     img: qrBase64.trim(),
     message: "请使用易奢堂 APP 扫码登录，扫描成功后再调用 check_login_status 或 get_user_token。"
+  };
+}
+
+async function loginFlow(args = {}) {
+  const selectedIndex = Number.isInteger(args.shop_index)
+    ? args.shop_index
+    : Number.isFinite(Number(args.shop_index))
+      ? Number(args.shop_index)
+      : null;
+
+  const selectedAccountUserId = args.account_user_id ? Number(args.account_user_id) : null;
+  const selectedEnterpriseNo = typeof args.enterprise_no === "string" ? args.enterprise_no.trim() : "";
+
+  if (selectedIndex || selectedAccountUserId || selectedEnterpriseNo) {
+    const result = await selectShop({
+      scan_token: args.scan_token,
+      shop_index: selectedIndex || undefined,
+      account_user_id: selectedAccountUserId || undefined,
+      enterprise_no: selectedEnterpriseNo || undefined
+    });
+    if (result.ok) {
+      return {
+        ok: true,
+        phase: "logged_in",
+        done: true,
+        message: `已为你选中店铺并拿到 userToken。当前账号 ID: ${result.accountUserId}`,
+        userToken: result.userToken
+      };
+    }
+    return {
+      ...result,
+      phase: "shop_selection_failed",
+      done: false
+    };
+  }
+
+  const tokenInfo = await getSavedToken();
+  if (tokenInfo && await validateFinalUserToken(tokenInfo.userToken)) {
+    return {
+      ok: true,
+      phase: "logged_in",
+      done: true,
+      message: "当前已经登录完成，可以直接继续使用商品相关 MCP。",
+      userToken: tokenInfo.userToken
+    };
+  }
+
+  const status = await readJson(STATUS_FILE, null);
+  if (status && status.status === "waiting_for_shop_selection") {
+    const shopsResult = await listShops({
+      scan_token: args.scan_token
+    });
+    if (!shopsResult.ok) {
+      return {
+        ...shopsResult,
+        phase: "waiting_for_shop_selection",
+        done: false
+      };
+    }
+
+    return {
+      ok: true,
+      phase: "waiting_for_shop_selection",
+      done: false,
+      message: "扫码已完成，还差最后一步选店。请让用户回复店铺编号、店铺号或 accountUserId，我会继续自动登录。",
+      shops: shopsResult.shops
+    };
+  }
+
+  const qrcodeResult = await getLoginQrcode(args);
+  if (!qrcodeResult.ok) {
+    return {
+      ...qrcodeResult,
+      phase: "qrcode_failed",
+      done: false
+    };
+  }
+
+  return {
+    ok: true,
+    phase: "waiting_for_scan",
+    done: false,
+    message: "请先扫码登录；扫码完成后我会继续帮你列出可选店铺。",
+    qrcodePath: qrcodeResult.qrcodePath,
+    img: qrcodeResult.img,
+    timeout: qrcodeResult.timeout
   };
 }
 

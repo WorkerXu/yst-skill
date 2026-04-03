@@ -13,6 +13,7 @@ if [ -z "$TOOL_NAME" ]; then
     echo "可用工具:"
     echo "  check_login_status - 检查当前登录状态"
     echo "  get_login_qrcode   - 获取扫码登录二维码并启动后台等待"
+    echo "  login_flow         - 对话式登录流程入口，自动判断下一步"
     echo "  list_shops         - 读取当前扫码态下可选的店铺列表"
     echo "  select_shop        - 选择店铺并获取最终 userToken"
     echo "  get_user_token     - 获取已保存的 userToken"

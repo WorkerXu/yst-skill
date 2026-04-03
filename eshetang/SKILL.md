@@ -9,6 +9,13 @@ description_en: "Eshetang QR login and userToken management"
 
 当前这套工具专注在登录与 `userToken` 管理，后续商品 MCP 可以直接复用这里落地的登录态。
 
+推荐把对话式登录入口统一收敛到 `login_flow`：
+
+- 没登录时：返回二维码和扫码提示
+- 扫码完成但未选店时：返回店铺列表，并提示用户回复编号/店铺号
+- 用户回复选择后：自动调用选店流程并换取最终 `userToken`
+- 已登录时：直接返回可复用的 `userToken`
+
 当用户显式引用 `$eshetang` 时：
 
 - 如果需求属于本 skill 能力范围，直接执行。
@@ -64,6 +71,7 @@ get_login_qrcode
 | `tool-call.sh <tool> [json_args]` | 通用工具入口 |
 | `login.sh` | 获取二维码并启动后台等待扫码 |
 | `status.sh` | 检查当前登录状态 |
+| `tool-call.sh login_flow` | 对话式登录流程入口 |
 | `tool-call.sh list_shops` | 获取当前可选店铺列表 |
 | `tool-call.sh select_shop` | 选择店铺并换取最终 `userToken` |
 | `user-token.sh` | 读取已保存的 `userToken` |
@@ -96,6 +104,22 @@ get_login_qrcode
 ```
 
 读取 `data/user-token.json` 中的 `userToken`，后续 MCP 可以直接使用这个值调用商品相关接口。
+
+### login_flow
+
+```json
+{}
+```
+
+如果用户已经回复了店铺选择，也可以直接传：
+
+```json
+{"shop_index": 1}
+{"enterprise_no": "SAAS20240920889475"}
+{"account_user_id": 8512}
+```
+
+这是最推荐给 Claw 对话层调用的单一入口。它会根据当前状态自动决定是给二维码、列店铺，还是直接完成登录。
 
 ### list_shops
 
@@ -151,3 +175,14 @@ get_login_qrcode
 2. 如果不存在，再回退读取 `data/cookies.json` 中的 `userToken`
 
 如果 token 失效，重新调用 `get_login_qrcode` 即可。
+
+## 对话建议
+
+当 Claw 在对话中调用 `$eshetang` 时，优先走下面这条流程：
+
+1. 调用 `login_flow {}`
+2. 如果返回 `phase=waiting_for_scan`，把二维码展示给用户并提示扫码
+3. 用户说“已扫码”后，再调用 `login_flow {}`
+4. 如果返回 `phase=waiting_for_shop_selection`，把 `shops` 按编号列给用户
+5. 用户回复“选 1”后，调用 `login_flow {"shop_index": 1}`
+6. 如果返回 `phase=logged_in`，继续使用返回的 `userToken`
