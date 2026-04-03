@@ -64,6 +64,8 @@ get_login_qrcode
 | `tool-call.sh <tool> [json_args]` | 通用工具入口 |
 | `login.sh` | 获取二维码并启动后台等待扫码 |
 | `status.sh` | 检查当前登录状态 |
+| `tool-call.sh list_shops` | 获取当前可选店铺列表 |
+| `tool-call.sh select_shop` | 选择店铺并换取最终 `userToken` |
 | `user-token.sh` | 读取已保存的 `userToken` |
 | `reset-login.sh` | 清理本地登录态 |
 
@@ -94,6 +96,29 @@ get_login_qrcode
 ```
 
 读取 `data/user-token.json` 中的 `userToken`，后续 MCP 可以直接使用这个值调用商品相关接口。
+
+### list_shops
+
+```json
+{}
+```
+
+读取扫码成功后的可选店铺列表。默认会从最近一次 `waiting_for_shop_selection` 状态中的 URL 里提取扫码 token。
+
+### select_shop
+
+```json
+{"shop_index": 1}
+```
+
+也支持：
+
+```json
+{"account_user_id": 8512}
+{"enterprise_no": "SAAS20240920889475"}
+```
+
+选择店铺后会直接换取最终 `userToken`，并写入本地 `data/user-token.json`。
 
 ### delete_session
 
