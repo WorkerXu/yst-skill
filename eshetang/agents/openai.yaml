@@ -1,4 +1,4 @@
 interface:
   display_name: "易奢堂"
   short_description: "扫码登录易奢堂、选店并提取 userToken"
-  default_prompt: "使用 $eshetang 完成易奢堂扫码登录，在需要时提示我选店铺，并读取当前 userToken。"
+  default_prompt: "使用 $eshetang 完成易奢堂扫码登录；如果进入选店步骤，请把店铺列表编号后展示给我，并把我回复的编号、店铺号或店铺名解析成登录动作。"

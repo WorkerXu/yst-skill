@@ -186,3 +186,57 @@ get_login_qrcode
 4. 如果返回 `phase=waiting_for_shop_selection`，把 `shops` 按编号列给用户
 5. 用户回复“选 1”后，调用 `login_flow {"shop_index": 1}`
 6. 如果返回 `phase=logged_in`，继续使用返回的 `userToken`
+
+## 回复解析规则
+
+当且仅当最近一次 `$eshetang` 对话返回了 `phase=waiting_for_shop_selection`，Claw 应把用户的自然语言回复优先解析为选店动作。
+
+优先级如下：
+
+1. 如果用户回复里出现明确数字编号：
+   - 例如：`选1`、`1`、`第一个`、`选择第 2 个`、`用3`
+   - 解析为：`login_flow {"shop_index": N}`
+
+2. 如果用户回复里出现完整店铺号：
+   - 例如：`选 SAAS20240920889475`
+   - 解析为：`login_flow {"enterprise_no": "SAAS20240920889475"}`
+
+3. 如果用户回复里出现与店铺名完全匹配或高置信匹配的文本：
+   - 例如：`选 测试测试`
+   - 解析为：`login_flow {"enterprise_no": "..."}`
+   - 优先使用当前 `shops` 列表中唯一匹配项对应的 `enterprise_no`
+
+4. 如果用户回复里出现 `accountUserId`：
+   - 例如：`选 8512 这个账号`
+   - 仅在上下文明确是 `accountUserId` 时解析为：`login_flow {"account_user_id": 8512}`
+
+5. 如果用户回复模糊不清：
+   - 例如：`就这个`、`帮我选一下`、`第一个店`
+   - 若当前 `shops` 只有 1 个，可自动解析为该店铺
+   - 若当前 `shops` 多于 1 个，必须追问用户更明确的编号或店铺号，不能猜
+
+6. 如果用户回复不是在选店，而是在陈述状态：
+   - 例如：`我已经扫码了`、`二维码扫完了`
+   - 解析为再次调用：`login_flow {}`
+
+7. 如果用户回复表示放弃或重来：
+   - 例如：`重来`、`重新扫码`、`清空登录`
+   - 优先执行：`delete_session {}`
+   - 然后再执行：`login_flow {}`
+
+## 对话话术约束
+
+- 如果 `phase=waiting_for_scan`：
+  - 简洁提示用户扫码，不要一次性输出过多解释
+
+- 如果 `phase=waiting_for_shop_selection`：
+  - 把店铺列表按 `1. 2. 3.` 编号列给用户
+  - 明确告诉用户可以回复：编号、店铺号、或店铺名
+  - 示例提示：`请回复店铺编号，例如“选1”。`
+
+- 如果用户回复可被解析成选店动作：
+  - 直接调用 `login_flow` 对应参数，不必先反问确认
+
+- 如果用户显式引用 `$eshetang`，但回复既不是扫码状态、也不是选店信息、也不是本 skill 能处理的能力：
+  - 直接说明当前无法完成
+  - 调用 `report_unsatisfied_request`
