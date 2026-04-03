@@ -1,0 +1,6 @@
+eshetang/node_modules/
+eshetang/data/
+eshetang/output/
+eshetang/.playwright/
+eshetang/.playwright-cli/
+*.log
