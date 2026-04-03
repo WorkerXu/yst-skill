@@ -13,12 +13,14 @@ const STATE_FILE = path.join(DATA_DIR, "browser-state.json");
 const COOKIES_FILE = path.join(DATA_DIR, "cookies.json");
 const TOKEN_FILE = path.join(DATA_DIR, "user-token.json");
 const STATUS_FILE = path.join(DATA_DIR, "login-status.json");
+const FEEDBACK_QUEUE_FILE = path.join(DATA_DIR, "feedback-queue.jsonl");
 const PID_FILE = path.join(DATA_DIR, "login-worker.pid");
 const QR_IMAGE_FILE = path.join(OUTPUT_DIR, "login-qrcode.png");
 const QR_BASE64_FILE = path.join(DATA_DIR, "login-qrcode.txt");
 const WORKER_LOG_FILE = path.join(DATA_DIR, "login-worker.log");
-const LOGIN_URL = "https://stage.pc.t.eshetang.com/account/login?redirect=%2F";
-const HOME_URL = "https://stage.pc.t.eshetang.com/";
+const LOGIN_URL = "https://pc.eshetang.com/account/login?redirect=%2F";
+const HOME_URL = "https://pc.eshetang.com/";
+const ACCOUNT_LIST_PATH = "/account/list";
 const DEFAULT_TIMEOUT_SECONDS = 240;
 const QR_SELECTOR = 'img[alt="qrcode"]';
 const USER_TOKEN_COOKIE = "userToken";
@@ -40,7 +42,8 @@ async function main() {
             "check_login_status",
             "get_login_qrcode",
             "get_user_token",
-            "delete_session"
+            "delete_session",
+            "report_unsatisfied_request"
           ]
         });
       case "check_login_status":
@@ -51,6 +54,8 @@ async function main() {
         return printJson(await getUserToken(args));
       case "delete_session":
         return printJson(await deleteSession(args));
+      case "report_unsatisfied_request":
+        return printJson(await reportUnsatisfiedRequest(args));
       case "__qr_worker":
         await runQrWorker(args);
         return;
@@ -108,6 +113,10 @@ async function writeJson(filePath, value) {
 
 async function writeText(filePath, text) {
   await fsp.writeFile(filePath, text, "utf8");
+}
+
+async function appendText(filePath, text) {
+  await fsp.appendFile(filePath, text, "utf8");
 }
 
 async function removeFile(filePath) {
@@ -233,6 +242,19 @@ async function launchContext(options = {}) {
   return { browser, context };
 }
 
+function inferLoginPhase(currentUrl, tokenCookie) {
+  if (tokenCookie && tokenCookie.value) {
+    return "logged_in";
+  }
+  if (currentUrl.includes(ACCOUNT_LIST_PATH)) {
+    return "waiting_for_shop_selection";
+  }
+  if (currentUrl.includes("/account/login")) {
+    return "waiting_for_scan";
+  }
+  return "unknown";
+}
+
 async function checkLoginStatus() {
   const savedToken = await getSavedToken();
   if (!savedToken) {
@@ -255,7 +277,8 @@ async function checkLoginStatus() {
     const cookies = await context.cookies();
     const cookie = extractUserTokenFromCookies(cookies);
     const currentUrl = page.url();
-    const isLoggedIn = Boolean(cookie && cookie.value) && !currentUrl.includes("/account/login");
+    const phase = inferLoginPhase(currentUrl, cookie);
+    const isLoggedIn = phase === "logged_in";
 
     if (isLoggedIn) {
       await saveSessionArtifacts(context, { source: "check_login_status" });
@@ -264,6 +287,7 @@ async function checkLoginStatus() {
     return {
       ok: true,
       isLoggedIn,
+      status: phase,
       currentUrl,
       userToken: isLoggedIn ? cookie.value : null,
       qrcodePath: fileExists(QR_IMAGE_FILE) ? QR_IMAGE_FILE : null
@@ -322,10 +346,11 @@ async function waitForQrMaterial(timeoutMs) {
 
 async function spawnQrWorker(args) {
   const timeoutSeconds = Number(args.timeout_seconds) > 0 ? Number(args.timeout_seconds) : DEFAULT_TIMEOUT_SECONDS;
+  const showBrowser = Boolean(args.show_browser);
   const workerArgs = [
     path.join(ROOT_DIR, "tools", "eshetang-cli.js"),
     "__qr_worker",
-    JSON.stringify({ timeout_seconds: timeoutSeconds })
+    JSON.stringify({ timeout_seconds: timeoutSeconds, show_browser: showBrowser })
   ];
 
   const logFd = fs.openSync(WORKER_LOG_FILE, "a");
@@ -350,7 +375,7 @@ async function runQrWorker(args) {
     shutdownRequested = true;
   });
   const { browser, context } = await launchContext({
-    headless: process.env.ESHETANG_HEADLESS !== "false",
+    headless: !(Boolean(args.show_browser) || process.env.ESHETANG_HEADLESS === "false"),
     useStorageState: true
   });
   const page = await context.newPage();
@@ -361,12 +386,15 @@ async function runQrWorker(args) {
 
     let cookies = await context.cookies();
     let tokenCookie = extractUserTokenFromCookies(cookies);
-    if (tokenCookie && tokenCookie.value && !page.url().includes("/account/login")) {
+    let currentUrl = page.url();
+    let phase = inferLoginPhase(currentUrl, tokenCookie);
+    if (phase === "logged_in") {
       await saveSessionArtifacts(context, { source: "worker_already_logged_in" });
       await writeJson(STATUS_FILE, {
         status: "logged_in",
         updatedAt: safeDateString(),
-        timeoutSeconds
+        timeoutSeconds,
+        currentUrl
       });
       return;
     }
@@ -383,6 +411,7 @@ async function runQrWorker(args) {
       createdAt: safeDateString(workerStartedAt),
       updatedAt: safeDateString(),
       timeoutSeconds,
+      showBrowser: Boolean(args.show_browser),
       expiresAt: new Date(workerStartedAt.getTime() + timeoutMs).toISOString(),
       qrcodePath: QR_IMAGE_FILE
     });
@@ -395,8 +424,22 @@ async function runQrWorker(args) {
       await delay(1000);
       cookies = await context.cookies();
       tokenCookie = extractUserTokenFromCookies(cookies);
-      const currentUrl = page.url();
-      if (tokenCookie && tokenCookie.value && !currentUrl.includes("/account/login")) {
+      currentUrl = page.url();
+      phase = inferLoginPhase(currentUrl, tokenCookie);
+
+      if (phase === "waiting_for_shop_selection") {
+        await writeJson(STATUS_FILE, {
+          status: "waiting_for_shop_selection",
+          updatedAt: safeDateString(),
+          timeoutSeconds,
+          currentUrl,
+          qrcodePath: fileExists(QR_IMAGE_FILE) ? QR_IMAGE_FILE : null,
+          showBrowser: Boolean(args.show_browser),
+          message: "扫码已通过，但还需要在 PC 页面完成店铺选择后才能拿到 userToken。"
+        });
+      }
+
+      if (phase === "logged_in") {
         await saveSessionArtifacts(context, { source: "qr_scan_login" });
         await writeJson(STATUS_FILE, {
           status: "logged_in",
@@ -449,8 +492,10 @@ async function getUserToken() {
     return {
       ok: false,
       isLoggedIn: false,
-      status: "logged_out",
-      message: "本地存在旧 token，但在线校验未通过，请重新执行 get_login_qrcode。"
+      status: liveStatus.status || "logged_out",
+      message: liveStatus.status === "waiting_for_shop_selection"
+        ? "扫码已完成，但还需要先完成店铺选择，完成后再重新获取 userToken。"
+        : "本地存在旧 token，但在线校验未通过，请重新执行 get_login_qrcode。"
     };
   }
 
@@ -490,6 +535,35 @@ async function deleteSession() {
     ok: true,
     deleted: true,
     message: "本地登录态与二维码缓存已清理。"
+  };
+}
+
+async function reportUnsatisfiedRequest(args) {
+  const taskSummary = typeof args.task_summary === "string" ? args.task_summary.trim() : "";
+  const reason = typeof args.reason === "string" ? args.reason.trim() : "";
+  const explicitSkill = args.explicit_skill_invocation !== false;
+
+  if (!taskSummary) {
+    fail("task_summary is required");
+  }
+
+  const payload = {
+    source: "eshetang-skill",
+    explicitSkillInvocation: explicitSkill,
+    taskSummary,
+    reason: reason || "skill_unable_to_complete",
+    createdAt: safeDateString()
+  };
+
+  await appendText(FEEDBACK_QUEUE_FILE, `${JSON.stringify(payload)}\n`);
+
+  return {
+    ok: true,
+    reported: false,
+    queued: true,
+    message: "已写入本地反馈队列，后续可由 yst-mcp 反馈接口统一上报。",
+    queueFile: FEEDBACK_QUEUE_FILE,
+    payload
   };
 }
 

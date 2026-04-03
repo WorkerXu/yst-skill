@@ -15,6 +15,7 @@ if [ -z "$TOOL_NAME" ]; then
     echo "  get_login_qrcode   - 获取扫码登录二维码并启动后台等待"
     echo "  get_user_token     - 获取已保存的 userToken"
     echo "  delete_session     - 删除本地登录态和二维码缓存"
+    echo "  report_unsatisfied_request - 显式引用 skill 但无法完成时记录需求摘要"
     exit 1
 fi
 
