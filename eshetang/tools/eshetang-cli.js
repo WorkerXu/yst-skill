@@ -70,6 +70,7 @@ async function main() {
             "get_api_catalog_summary",
             "search_api_operations",
             "get_api_operation_details",
+            "get_api_operation_latest_example",
             "invoke_api_operation",
             "call_remote_mcp_tool"
           ]
@@ -100,6 +101,7 @@ async function main() {
       case "get_api_catalog_summary":
       case "search_api_operations":
       case "get_api_operation_details":
+      case "get_api_operation_latest_example":
       case "invoke_api_operation":
         return printJson(await proxyRemoteTool(command, args));
       case "call_remote_mcp_tool":
@@ -1035,7 +1037,8 @@ async function proxyRemoteTool(toolName, args) {
     "refresh_api_catalog",
     "get_api_catalog_summary",
     "search_api_operations",
-    "get_api_operation_details"
+    "get_api_operation_details",
+    "get_api_operation_latest_example"
   ].includes(toolName);
 
   return callRemoteMcpTool(toolName, args, {
@@ -1064,6 +1067,30 @@ async function callRemoteMcpTool(toolName, toolArgs, options = {}) {
   const headers = buildRemoteHeaders(mcpConfig, userTokenInfo);
   const sessionId = await initializeRemoteMcp(mcpConfig.mcpUrl, headers);
   await notifyRemoteInitialized(mcpConfig.mcpUrl, sessionId, headers);
+
+  if (toolName === "invoke_api_operation") {
+    const detailArgs = pickOperationLocatorArgs(toolArgs);
+    const operationDetails = await invokeRemoteTool(
+      mcpConfig.mcpUrl,
+      sessionId,
+      headers,
+      "get_api_operation_details",
+      detailArgs
+    );
+    const result = await invokeRemoteTool(mcpConfig.mcpUrl, sessionId, headers, toolName, toolArgs);
+
+    return {
+      ok: true,
+      mcpUrl: mcpConfig.mcpUrl,
+      toolName,
+      usedUserToken: Boolean(userTokenInfo && userTokenInfo.userToken),
+      preflight: {
+        operationDetails
+      },
+      result
+    };
+  }
+
   const result = await invokeRemoteTool(mcpConfig.mcpUrl, sessionId, headers, toolName, toolArgs);
 
   return {
@@ -1073,6 +1100,16 @@ async function callRemoteMcpTool(toolName, toolArgs, options = {}) {
     usedUserToken: Boolean(userTokenInfo && userTokenInfo.userToken),
     result
   };
+}
+
+function pickOperationLocatorArgs(toolArgs = {}) {
+  const args = {};
+  for (const key of ["operationId", "path", "method", "sourceKey"]) {
+    if (toolArgs[key] !== undefined) {
+      args[key] = toolArgs[key];
+    }
+  }
+  return args;
 }
 
 function normalizeAssistantType(value) {

@@ -26,6 +26,7 @@ if [ -z "$TOOL_NAME" ]; then
     echo "  get_api_catalog_summary - 获取远端接口目录摘要"
     echo "  search_api_operations - 搜索远端接口"
     echo "  get_api_operation_details - 查看远端接口详情"
+    echo "  get_api_operation_latest_example - 查看远端接口最近调用样例"
     echo "  invoke_api_operation - 调用远端接口"
     echo "  call_remote_mcp_tool - 通用远端工具代理"
     exit 1

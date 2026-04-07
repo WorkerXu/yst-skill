@@ -1,4 +1,4 @@
 interface:
   display_name: "易奢堂"
   short_description: "易奢堂统一 skill，自动安装不同平台的 MCP，并连接远端 yst-mcp"
-  default_prompt: "使用 $eshetang 时，默认通过环境变量 ESHETANG_MCP_URL 或默认地址 https://789.mcp.t.eshetang.com/yst/mcp 连接远端 yst-mcp；如果用户要求安装 MCP，优先调用 install_mcp，在一个统一 skill 内自动识别或询问助理类型并完成安装。商品按库存理解。凡是接口必填参数无法从上下文、前置接口结果或明确规则中唯一得到时，必须先询问用户，不能自行猜测。"
+  default_prompt: "使用 $eshetang 时，默认通过环境变量 ESHETANG_MCP_URL 或默认地址 https://789.mcp.t.eshetang.com/yst/mcp 连接远端 yst-mcp；如果用户要求安装 MCP，优先调用 install_mcp，在一个统一 skill 内自动识别或询问助理类型并完成安装。商品按库存理解。凡是接口必填参数无法从上下文、前置接口结果或明确规则中唯一得到时，必须先询问用户，不能自行猜测。调用任何远端接口前，必须先调用 get_api_operation_details 查看接口定义和 latestInvocationSample；默认不需要再额外调用 get_api_operation_latest_example，只有在详情里的样例明显不够时才调用，然后才能执行 invoke_api_operation。"

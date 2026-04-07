@@ -161,6 +161,7 @@ select_shop {
 - `get_api_catalog_summary`
 - `search_api_operations`
 - `get_api_operation_details`
+- `get_api_operation_latest_example`
 - `invoke_api_operation`
 
 ## 本地工具
@@ -266,9 +267,33 @@ select_shop {
 
 查看单个接口的参数和请求体结构。
 
+它同时也是调用前的强制预检查入口。只要准备调用某个接口，必须先看这个工具返回的：
+
+- 参数定义
+- 请求体结构
+- 响应结构
+- `latestInvocationSample`
+
+如果这些信息还不足以确定必填参数，就必须先问用户，不能直接继续调用。
+
+### `get_api_operation_latest_example`
+
+这个工具保留为兜底能力，但不是默认必调。
+
+因为 `get_api_operation_details` 已经会返回 `latestInvocationSample`，所以通常先看详情就够了。只有在以下少数场景下，才需要单独再查一次：
+
+- 你怀疑详情里的样例不够新
+- 你只想单独拉取样例，不想重复查看完整定义
+
 ### `invoke_api_operation`
 
 调用远端业务接口。
+
+规则：
+
+- 在 skill 层面，调用任何接口前都必须先执行 `get_api_operation_details`
+- 不需要默认再额外调用 `get_api_operation_latest_example`，因为 `get_api_operation_details` 已经带了 `latestInvocationSample`
+- 当前 CLI 在真正调用远端 `invoke_api_operation` 前，也只会自动先做一次 `get_api_operation_details` 预检查
 
 ### `call_remote_mcp_tool`
 
@@ -286,6 +311,13 @@ select_shop {
 4. 用 `invoke_api_operation` 调这些名称查询接口，从返回结果里拿到需要的 ID
 5. 再调用目标查询/创建库存接口
 6. 如果远端 swagger 变化了，先刷新目录再继续
+
+补充要求：
+
+- 在每次真正执行 `invoke_api_operation` 之前，必须先至少调用一次 `get_api_operation_details`
+- 详情里已经自带 `latestInvocationSample`，默认直接用这一份作为调用参考
+- 只有在样例明显不足时，才再单独调用 `get_api_operation_latest_example`
+- 不能跳过“看定义与样例”这一步直接调用接口
 
 ## 必填参数规则
 
