@@ -12,16 +12,25 @@
 
 ## 安装 Skill
 
-将 `eshetang/` 安装到你的助理 skill 目录后，执行：
+将 `eshetang/` 安装到你的助理 skill 目录后，建议先执行：
 
 ```bash
 ./scripts/install-check.sh
-./scripts/install-mcp.sh
 ```
+
+如果用户是通过助理来完成安装，则 skill 应先生成一份安装计划，列出：
+
+1. 缺少哪些工具
+2. 每个工具是做什么用的
+3. 推荐的安装步骤
+
+然后先询问用户是否开始安装。只有用户明确同意后，才继续执行安装。
+
+`install-check.sh` 仍然是推荐的前置检查脚本，用来一次性补齐依赖并做最终确认。
 
 ## MCP 安装方式
 
-`./scripts/install-mcp.sh` 会先询问你当前使用的助理类型，再自动选择安装方式。
+`./scripts/install-mcp.sh` 会询问你当前使用的助理类型，再自动选择安装方式。
 
 支持的平台和对应行为如下：
 

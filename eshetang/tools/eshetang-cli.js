@@ -952,6 +952,28 @@ async function deleteSession() {
 }
 
 async function installMcp(args = {}) {
+  const prerequisites = await inspectInstallPrerequisites();
+  const confirmed = args.confirm === true || args.confirm === "true" || args.start_install === true;
+
+  if (!prerequisites.ready && !confirmed) {
+    return {
+      ok: false,
+      needsUserConfirmation: true,
+      status: "install_prerequisites_required",
+      message: "开始安装前，还需要先准备本地环境。我已经整理好了需要安装的工具和安装步骤；如果你确认开始，我再继续执行安装。",
+      prerequisites
+    };
+  }
+
+  if (!prerequisites.ready && confirmed) {
+    return {
+      ok: false,
+      status: "install_prerequisites_missing",
+      message: "当前环境依赖还没准备好，请先按步骤安装缺失工具并执行 ./scripts/install-check.sh，完成后我再继续安装 MCP。",
+      prerequisites
+    };
+  }
+
   const requestedType = normalizeAssistantType(args.assistant_type || args.platform || args.assistantType);
   const detected = detectAssistantTypes();
   const assistantType = requestedType || (detected.length === 1 ? detected[0] : null);
@@ -974,7 +996,70 @@ async function installMcp(args = {}) {
     ok: true,
     assistantType,
     mcpUrl: DEFAULT_MCP_URL,
+    prerequisites,
     ...result
+  };
+}
+
+async function inspectInstallPrerequisites() {
+  const missing = [];
+  const installed = [];
+  const steps = [];
+  const toolDescriptions = {
+    node: "运行 skill CLI 与脚本工具所需的 Node.js 运行时",
+    npm: "安装 skill 依赖包与 Playwright 浏览器依赖",
+    jq: "让 shell 脚本安全解析和校验 JSON 参数",
+    playwright: "用于扫码登录、二维码截图与浏览器自动化流程",
+    chromium: "Playwright 登录流程依赖的浏览器内核",
+  };
+
+  if (!commandExists("node")) {
+    missing.push("node");
+    steps.push("安装 Node.js 18+，用于运行 skill CLI 与脚本");
+  } else {
+    installed.push("node");
+  }
+  if (!commandExists("npm")) {
+    missing.push("npm");
+    steps.push("安装 npm，或安装自带 npm 的 Node.js 发行版");
+  } else {
+    installed.push("npm");
+  }
+  if (!commandExists("jq")) {
+    missing.push("jq");
+    steps.push("安装 jq，用于 shell 脚本处理 JSON 参数");
+  } else {
+    installed.push("jq");
+  }
+
+  const playwrightPackage = fileExists(path.join(ROOT_DIR, "node_modules", "playwright", "package.json"));
+  if (!playwrightPackage) {
+    missing.push("playwright");
+    steps.push("在 skill 目录执行 npm install，安装项目依赖与 Playwright");
+  } else {
+    installed.push("playwright");
+  }
+
+  const chromiumHint = fileExists(path.join(ROOT_DIR, "node_modules", "playwright", "package.json"))
+    ? "执行 npx playwright install chromium，安装扫码登录需要的浏览器内核"
+    : "完成 npm install 后执行 npx playwright install chromium，安装扫码登录需要的浏览器内核";
+  const chromiumInstalled = fileExists(path.join(os.homedir(), ".cache", "ms-playwright")) ||
+    fileExists(path.join(ROOT_DIR, "node_modules", ".cache", "ms-playwright"));
+  if (!chromiumInstalled) {
+    missing.push("chromium");
+    steps.push(chromiumHint);
+  } else {
+    installed.push("chromium");
+  }
+
+  steps.push("执行 ./scripts/install-check.sh，自动补齐依赖并做最终检查");
+
+  return {
+    ready: missing.length === 0,
+    installed,
+    missing,
+    toolDescriptions,
+    steps
   };
 }
 

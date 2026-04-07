@@ -18,6 +18,7 @@ description_en: "Eshetang login, shop selection, remote MCP config, and business
    - 用选中的店铺换取最终 `userToken`
 
 2. MCP 安装与远端业务编排：
+   - 在真正安装前，先生成一份安装计划，列出缺失工具、用途说明和推荐步骤，并询问用户是否开始安装
    - 在一个统一 skill 里自动识别或询问当前助理类型，并安装对应的 MCP 配置
    - 通过环境变量 `ESHETANG_MCP_URL` 或工具内置默认值连接远端 `yst-mcp`
    - 把本地 `userToken` 通过 MCP 初始化请求头带给远端
@@ -88,6 +89,23 @@ invoke_api_operation
 
 ### 1. 先确认环境是否就绪
 
+如果用户希望“安装 MCP”或“接入易奢堂 MCP”，先不要直接开始安装。
+
+先生成安装计划，内容至少包括：
+
+- 缺少哪些工具
+- 每个工具的用途说明
+- 推荐安装步骤
+- 是否建议执行 `./scripts/install-check.sh`
+
+然后必须先问用户是否开始安装。
+
+`install-check.sh` 依然是推荐的前置检查脚本：
+
+```bash
+./scripts/install-check.sh
+```
+
 如果用户希望“安装 MCP”或“接入易奢堂 MCP”，优先调用：
 
 ```json
@@ -95,6 +113,9 @@ install_mcp {}
 ```
 
 行为规则：
+- 如果依赖未准备好，`install_mcp` 应先返回安装计划和用途说明，而不是直接失败
+- 这时你必须先问用户“是否开始安装”
+- 只有用户明确同意后，才继续执行真正安装
 - 如果能自动识别当前助理类型，就直接安装
 - 如果不能唯一识别，就先问用户当前使用的是哪种助理
 - 支持的平台：
@@ -171,6 +192,8 @@ select_shop {
 统一安装远端 `yst-mcp`。
 
 它会：
+- 先检查本地环境，并返回缺失工具、用途说明和推荐步骤
+- 如果用户还没确认开始安装，就先停在安装计划阶段
 - 优先尝试自动识别当前助理类型
 - 自动把 `ESHETANG_MCP_URL` 写入 shell profile
 - 按不同平台写入对应的 MCP 配置
