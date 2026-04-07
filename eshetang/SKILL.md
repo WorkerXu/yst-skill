@@ -24,6 +24,16 @@ description_en: "Eshetang login, shop selection, remote MCP config, and business
    - 把本地 `userToken` 通过 MCP 初始化请求头带给远端
    - 让模型可以搜索接口、查看详情、名称换 ID、调用接口
 
+## 前置规则
+
+环境检查必须是所有实际操作的前置条件。
+
+- 扫码登录、二维码截图、选店流程依赖本地浏览器自动化环境
+- 任何远端 MCP 操作都依赖先完成登录并拿到最终 `userToken`
+- 因此，在执行 `check_login_status`、`get_login_qrcode`、`login_flow`、`list_shops`、`select_shop`、`get_user_token`、`get_integration_status`、以及所有远端 MCP 工具前，都必须先完成环境检查
+- 如果环境未准备好，不要继续后续步骤；应先返回安装计划、列出缺失工具和用途说明，并询问用户是否开始安装
+- 只有 `help`、`install_mcp`、`set_mcp_config`、`get_mcp_config`、`delete_session` 可以跳过这层前置检查
+
 远端 MCP 默认地址：
 `https://789.mcp.t.eshetang.com/yst/mcp`
 
@@ -58,6 +68,11 @@ description_en: "Eshetang login, shop selection, remote MCP config, and business
 用户业务需求
    │
    ▼
+环境检查
+   │
+   ├── 未就绪：生成安装计划并询问用户是否开始安装
+   │
+   ▼
 读取 `ESHETANG_MCP_URL` 或默认 MCP 地址
    │
    ▼
@@ -89,6 +104,10 @@ invoke_api_operation
 
 ### 1. 先确认环境是否就绪
 
+这一步不是安装场景专属，而是所有实际操作的统一前置条件。
+
+如果用户要执行登录、查看集成状态、读取 token、或任何远端 MCP 操作，都要先确认环境是否就绪。
+
 如果用户希望“安装 MCP”或“接入易奢堂 MCP”，先不要直接开始安装。
 
 先生成安装计划，内容至少包括：
@@ -100,7 +119,7 @@ invoke_api_operation
 
 然后必须先问用户是否开始安装。
 
-`install-check.sh` 依然是推荐的前置检查脚本：
+`install-check.sh` 是环境检查流程里的最终确认脚本：
 
 ```bash
 ./scripts/install-check.sh
@@ -124,6 +143,11 @@ install_mcp {}
   - `cursor`
   - `cc-code`
   - `xiaolongxia`
+
+对于所有其他实际操作也是一样：
+
+- 如果环境检查未通过，要先返回安装计划
+- 不要继续扫码、选店、读取 `userToken`、检查集成状态或调用远端 MCP
 
 优先调用：
 

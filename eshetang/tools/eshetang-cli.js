@@ -49,6 +49,10 @@ async function main() {
     const command = process.argv[2] || "help";
     const rawArgs = process.argv[3];
     const args = parseJsonArgs(rawArgs);
+    const blockedByPrerequisites = await getPrerequisiteBlockingResponse(command);
+    if (blockedByPrerequisites) {
+      return printJson(blockedByPrerequisites);
+    }
 
     switch (command) {
       case "help":
@@ -998,6 +1002,35 @@ async function installMcp(args = {}) {
     mcpUrl: DEFAULT_MCP_URL,
     prerequisites,
     ...result
+  };
+}
+
+async function getPrerequisiteBlockingResponse(command) {
+  const bypassCommands = new Set([
+    "help",
+    "install_mcp",
+    "set_mcp_config",
+    "get_mcp_config",
+    "delete_session",
+    "__qr_worker"
+  ]);
+
+  if (bypassCommands.has(command)) {
+    return null;
+  }
+
+  const prerequisites = await inspectInstallPrerequisites();
+  if (prerequisites.ready) {
+    return null;
+  }
+
+  return {
+    ok: false,
+    needsUserConfirmation: true,
+    status: "install_prerequisites_required",
+    blockingCommand: command,
+    message: "当前任何登录或远端 MCP 操作前，都必须先完成环境检查。因为后续扫码登录、选店和 userToken 获取都依赖这些本地能力；请先确认是否开始安装缺失工具。",
+    prerequisites
   };
 }
 
