@@ -2,7 +2,7 @@
 
 统一的易奢堂 skill。
 
-这个 skill 不再要求用户先根据助理类型挑选不同目录，而是只安装 `eshetang/`，然后在安装 MCP 时自动识别或询问当前助理类型。
+安装 `eshetang/`，然后在安装 MCP 时自动识别或询问当前助理类型。
 
 ## 默认远端 MCP
 
@@ -49,7 +49,7 @@
 claude mcp add --scope user --transport http eshetang https://789.mcp.t.eshetang.com/yst/mcp
 ```
 
-### `xiaolongxia`
+### `openclaw`
 
 - 写入环境变量 `ESHETANG_MCP_URL`
 - 更新 `~/.mcporter/mcporter.json`

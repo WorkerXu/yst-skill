@@ -2,11 +2,10 @@
 
 易奢堂统一 skill 仓库。
 
-现在仓库只推荐安装一个目录：
 
 - `eshetang/`
 
-这个统一 skill 会同时负责：
+这个skill 会同时负责：
 
 1. 易奢堂后台扫码登录
 2. 扫码后列出店铺并选店换取最终 `userToken`
@@ -39,7 +38,7 @@
 - `workbuddy`
 - `cursor`
 - `cc-code`
-- `xiaolongxia`
+- `openclaw`
 
 更详细的安装说明见：
 
