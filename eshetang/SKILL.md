@@ -1,6 +1,6 @@
 ---
 name: eshetang
-description: "易奢堂后台管理工具。使用场景：扫码登录后台、在扫码后选择店铺并换取最终 userToken、配置远端 yst-mcp 地址、通过远端 MCP 搜索/查看/调用业务接口，并由模型自行分析接口定义完成业务编排。"
+description: "易奢堂后台管理工具。使用场景：扫码登录后台、在扫码后选择店铺并换取最终 userToken、通过环境变量或平台安装脚本读取远端 yst-mcp 地址、通过远端 MCP 搜索/查看/调用业务接口，并由模型自行分析接口定义完成业务编排。"
 description_zh: "易奢堂扫码登录、选店换 token、MCP 配置与业务编排"
 description_en: "Eshetang login, shop selection, remote MCP config, and business orchestration"
 ---
@@ -18,9 +18,12 @@ description_en: "Eshetang login, shop selection, remote MCP config, and business
    - 用选中的店铺换取最终 `userToken`
 
 2. 远端业务编排：
-   - 通过 `mcp_url` 配置连接你部署在服务器上的 `yst-mcp`
+   - 通过环境变量 `ESHETANG_MCP_URL` 或工具内置默认值连接远端 `yst-mcp`
    - 把本地 `userToken` 通过 MCP 初始化请求头带给远端
    - 让模型可以搜索接口、查看详情、名称换 ID、调用接口
+
+远端 MCP 默认地址：
+`https://789.mcp.t.eshetang.com/yst/mcp`
 
 登录页：
 `https://pc.eshetang.com/account/login?redirect=%2F`
@@ -31,10 +34,21 @@ description_en: "Eshetang login, shop selection, remote MCP config, and business
 
 典型场景：
 - “帮我登录易奢堂后台”
-- “配置远端 yst-mcp 地址”
+- “检查远端 yst-mcp 是否可用”
 - “查商品接口”
 - “把卡地亚昨天新发布的商品加入商品库”
-- “先找品牌相关下拉接口，再查商品，再执行新增”
+- “先找品牌相关下拉接口，再查库存，再执行创建库存”
+
+## 业务语义约定
+
+在易奢堂当前业务里，用户口中的“商品”默认按“库存”理解。
+
+这意味着：
+- “查商品” 优先理解为 “查库存”
+- “新增商品” 优先理解为 “创建库存”
+- “修改商品” 优先理解为 “修改库存”
+
+不要优先走 `product-json` 下的 `商品管理`、`商品管理 v3`、`商品管理 v4`、`管货商品管理` 接口；这些接口在远端 MCP 中会被隐藏。优先走 `stock` 相关接口，尤其是 `库存模块`。
 
 ## 完整流程
 
@@ -42,9 +56,7 @@ description_en: "Eshetang login, shop selection, remote MCP config, and business
 用户业务需求
    │
    ▼
-检查 mcp_url 是否已配置
-   │
-   ├── 未配置：引导或执行 set_mcp_config
+读取 `ESHETANG_MCP_URL` 或默认 MCP 地址
    │
    ▼
 检查本地是否已登录
@@ -84,20 +96,8 @@ get_integration_status {}
 这会同时告诉你：
 - 是否已经登录
 - 是否已有 `userToken`
-- 是否配置了 `mcp_url`
+- 当前 MCP 地址来源（环境变量或默认值）
 - 远端 `yst-mcp` 是否能返回接口目录摘要
-
-### 2. 没有配置远端 MCP
-
-如果用户已经给了地址，直接调用：
-
-```json
-set_mcp_config {
-  "mcp_url": "https://your-server.example.com/yst/mcp"
-}
-```
-
-配置时用户只需要提供 `mcp_url`。
 
 ### 3. 没有登录
 
@@ -187,11 +187,19 @@ select_shop {
 
 ### `set_mcp_config`
 
-设置远端 `yst-mcp` 地址。
+当前不再通过对话写入远端地址。
+
+这个工具只会提示用户：
+- 优先使用对应平台的 MCP 安装脚本
+- 如需覆盖地址，修改环境变量 `ESHETANG_MCP_URL`
+- 或修改工具中的默认值
 
 ### `get_mcp_config`
 
-查看当前远端 MCP 配置。输出里只展示 `mcp_url`。
+查看当前远端 MCP 配置。输出会展示：
+- `mcpUrl`
+- `source`
+- `envKey`
 
 ### `get_integration_status`
 
@@ -200,7 +208,7 @@ select_shop {
 ## 远端代理工具
 
 这些工具会自动：
-- 读取本地 `mcp_url`
+- 读取环境变量 `ESHETANG_MCP_URL`，若不存在则使用默认值
 - 尝试读取本地 `userToken`
 - 在 MCP 初始化请求时通过请求头传给远端
 
@@ -244,11 +252,11 @@ select_shop {
 
 正确做法是：
 
-1. 先在远端 swagger 目录里找“查询商品”“新增商品”“品牌下拉”“分类下拉”
+1. 先把“商品”翻译成“库存”，再在远端 swagger 目录里找“查询库存”“创建库存”“品牌下拉”“分类下拉”
 2. 查看这些接口详情，确认参数
 3. 再次使用 `search_api_operations` 和 `get_api_operation_details`，优先寻找 `combo-box`、`enum`、`list` 这类接口，并根据参数定义判断名称查询字段
 4. 用 `invoke_api_operation` 调这些名称查询接口，从返回结果里拿到需要的 ID
-5. 再调用目标查询/新增接口
+5. 再调用目标查询/创建库存接口
 6. 如果远端 swagger 变化了，先刷新目录再继续
 
 也就是说，这套 skill 的目标不是只处理“添加商品”，而是让 Claw 能基于现有能力自己编排完成用户需求。
@@ -268,7 +276,7 @@ select_shop {
 - 用户回复编号、店铺号或 `accountUserId` 后，再调用 `login_flow` 或 `select_shop`
 
 常见做不到的情况：
-- 还没有配置 `mcp_url`
+- 当前平台还没有完成 MCP 安装
 - 用户还没扫码登录，拿不到 `userToken`
 - 用户还没有完成选店，拿不到最终 `userToken`
 - 远端 swagger 里不存在对应接口
@@ -281,7 +289,6 @@ select_shop {
 ```bash
 cd scripts
 ./install-check.sh
-./tool-call.sh set_mcp_config '{"mcp_url":"https://your-server.example.com/yst/mcp"}'
 ./tool-call.sh get_integration_status
 ./tool-call.sh login_flow
 ./tool-call.sh login_flow '{"shop_index":1}'

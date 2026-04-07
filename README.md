@@ -1,82 +1,75 @@
 # yst-skill
 
-易奢堂相关的 Claw/Codex skill 仓库。
+易奢堂多平台 skill 仓库。
 
-当前包含：
+这个仓库不再只提供一个通用 skill，而是按助理平台拆成多个独立目录。用户应根据自己正在使用的助理安装对应目录。
 
-- `eshetang/`：易奢堂扫码登录、`userToken` 获取、远端 `yst-mcp` 配置与业务编排 skill
+## 可选 Skill
 
-## 核心能力
+- `eshetang-codex/`
+  - 面向 OpenAI Codex
+  - 自动写入 `~/.codex/config.toml`
+- `eshetang-workbuddy/`
+  - 面向 WorkBuddy
+  - 自动写入 `~/.workbuddy/mcp.json`
+- `eshetang-cursor/`
+  - 面向 Cursor
+  - 自动写入 `~/.cursor/mcp.json`
+- `eshetang-cc-code/`
+  - 面向 Claude Code
+  - 自动调用 `claude mcp add --scope user --transport http ...`
+- `eshetang-xiaolongxia/`
+  - 面向小龙虾 / mcporter 生态
+  - 自动写入 `~/.mcporter/mcporter.json`
 
-这套 skill 当前覆盖两段完整流程：
+## 默认 MCP 地址
 
-1. 本地登录
-- 打开 `https://pc.eshetang.com/account/login?redirect=%2F`
-- 生成二维码并等待扫码
-- 提取并持久化 `userToken`
+所有平台默认都使用：
 
-2. 远端 MCP 编排
-- 配置你部署在服务器上的 `yst-mcp` 地址
-- 通过 MCP 初始化请求头把本地 `userToken` 带给远端
-- 搜索接口
-- 查看接口详情
-- 调用远端接口
-- 让模型基于接口定义自行完成业务编排
+`https://789.mcp.t.eshetang.com/yst/mcp`
 
-## 适用场景
+安装脚本会默认注入环境变量：
 
-用户可以用它完成类似任务：
-
-- 登录易奢堂后台
-- 检查本地登录状态和远端 MCP 集成状态
-- 配置远端 `yst-mcp` 的 `mcp_url`
-- 搜索商品、库存、订单、仓储、设置等模块接口
-- 通过自然语言需求，让模型自己组合查询接口、下拉接口、枚举接口和目标写接口
-
-## 典型工作流
-
-```text
-配置 mcp_url
-   │
-   ▼
-扫码登录并拿到 userToken
-   │
-   ▼
-通过远端 yst-mcp 搜索接口
-   │
-   ▼
-查看接口参数定义
-   │
-   ▼
-调用名称查询 / 枚举 / 目标业务接口
-   │
-   ▼
-完成用户请求
+```bash
+export ESHETANG_MCP_URL="https://789.mcp.t.eshetang.com/yst/mcp"
 ```
+
+如果平台支持通过环境变量读取地址，则后续可以直接覆盖 `ESHETANG_MCP_URL`。
+如果平台不支持，则需要手动修改环境变量后重新执行安装脚本，或者直接修改配置文件中的默认值。
+
+## 业务语义约定
+
+在易奢堂当前业务里，用户口中的“商品”默认按“库存”理解：
+
+- 查商品 = 查库存
+- 新增商品 = 创建库存
+- 修改商品 = 修改库存
+
+远端 `yst-mcp` 已隐藏 `product-json` 下的：
+- 管货商品管理
+- 商品管理
+- 商品管理 v3
+- 商品管理 v4
+
+因此各平台 skill 都会优先走 `stock` 相关接口。
 
 ## 安装方式
 
-用户可以直接在 Claw/Codex 对话中表达类似需求：
+请按平台安装对应目录，例如：
 
-- 安装 GitHub 仓库 `WorkerXu/yst-skill` 里的 `eshetang` skill
-- 从 `https://github.com/WorkerXu/yst-skill/tree/main/eshetang` 安装 skill
+- Codex：安装 `eshetang-codex`
+- WorkBuddy：安装 `eshetang-workbuddy`
+- Cursor：安装 `eshetang-cursor`
+- Claude Code：安装 `eshetang-cc-code`
+- 小龙虾：安装 `eshetang-xiaolongxia`
 
-安装后重启 Claw/Codex 以加载新 skill。
+每个目录里的 `README.md` 都详细说明了：
 
-## 安装后推荐的第一步
+1. 自动安装 MCP 的命令
+2. 会修改哪些本地文件
+3. 如何覆盖默认地址
+4. 安装完成后如何开始登录和调用业务接口
 
-1. 配置远端 `yst-mcp` 地址
-2. 检查集成状态
-3. 如果还没登录，就扫码获取 `userToken`
+## 兼容说明
 
-对应典型对话可以是：
-
-- “使用 `eshetang` skill，配置远端 MCP 地址为 `https://789.mcp.t.eshetang.com/yst/mcp`”
-- “使用 `eshetang` skill，检查当前集成状态”
-- “使用 `eshetang` skill，帮我登录易奢堂后台”
-- “使用 `eshetang` skill，搜索商品新增接口”
-
-## Skill 入口
-
-- Skill 目录：[eshetang](https://github.com/WorkerXu/yst-skill/tree/main/eshetang)
-- Skill 说明：[eshetang/SKILL.md](https://github.com/WorkerXu/yst-skill/blob/main/eshetang/SKILL.md)
+仓库中的旧目录 `eshetang/` 保留为历史兼容版本，但新的安装与分发应优先使用上述平台专用目录。

@@ -1,4 +1,4 @@
 interface:
   display_name: "易奢堂"
-  short_description: "扫码登录易奢堂、扫码后选店换取最终 userToken、配置远端 yst-mcp，并通过远端接口完成业务编排"
-  default_prompt: "使用 $eshetang 先检查集成状态；如果还没配置远端 MCP，就引导或执行 set_mcp_config；如果还没登录，就优先执行 login_flow。login_flow 可能返回二维码，也可能在扫码后返回待选店铺列表；只有在完成选店并返回 logged_in 后，才说明已经拿到最终 userToken。拿到最终 userToken 后，再通过远端 yst-mcp 的 search_api_operations、get_api_operation_details、invoke_api_operation 完成我的业务请求。"
+  short_description: "易奢堂通用 skill，默认通过环境变量或默认地址连接 yst-mcp"
+  default_prompt: "使用 $eshetang 时，默认通过环境变量 ESHETANG_MCP_URL 或默认地址 https://789.mcp.t.eshetang.com/yst/mcp 连接远端 yst-mcp；如果用户要求安装 MCP，请改为推荐对应平台专用目录 eshetang-codex、eshetang-workbuddy、eshetang-cursor、eshetang-cc-code、eshetang-xiaolongxia。商品按库存理解。"
