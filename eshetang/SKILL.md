@@ -1,8 +1,8 @@
 ---
 name: eshetang
-description: "易奢堂后台管理工具。使用场景：扫码登录后台、获取并持久化 cookie 中的 userToken、配置远端 yst-mcp 地址、通过远端 MCP 搜索/查看/调用业务接口，并由模型自行分析接口定义完成业务编排。"
-description_zh: "易奢堂扫码登录、MCP 配置与业务编排"
-description_en: "Eshetang login, remote MCP config, and business orchestration"
+description: "易奢堂后台管理工具。使用场景：扫码登录后台、在扫码后选择店铺并换取最终 userToken、配置远端 yst-mcp 地址、通过远端 MCP 搜索/查看/调用业务接口，并由模型自行分析接口定义完成业务编排。"
+description_zh: "易奢堂扫码登录、选店换 token、MCP 配置与业务编排"
+description_en: "Eshetang login, shop selection, remote MCP config, and business orchestration"
 ---
 
 # 易奢堂 Skill
@@ -13,7 +13,9 @@ description_en: "Eshetang login, remote MCP config, and business orchestration"
    - 打开易奢堂后台登录页
    - 生成二维码
    - 等待扫码成功
-   - 提取并持久化 `userToken`
+   - 如果登录账号绑定了多个店铺，则列出店铺
+   - 让用户选择店铺
+   - 用选中的店铺换取最终 `userToken`
 
 2. 远端业务编排：
    - 通过 `mcp_url` 配置连接你部署在服务器上的 `yst-mcp`
@@ -47,7 +49,9 @@ description_en: "Eshetang login, remote MCP config, and business orchestration"
    ▼
 检查本地是否已登录
    │
-   ├── 未登录：执行 get_login_qrcode，等待扫码
+   ├── 未登录：执行 login_flow / get_login_qrcode，等待扫码
+   │
+   ├── 已扫码但未选店：列出店铺并等待用户选择
    │
    ▼
 读取本地 userToken
@@ -103,12 +107,34 @@ set_mcp_config {
 get_login_qrcode {}
 ```
 
-然后把二维码展示给用户，等用户扫码后再调用：
+然后把二维码展示给用户。扫码后不要立刻假设已经拿到最终 token，而是继续调用：
 
 ```json
-check_login_status {}
-get_user_token {}
+login_flow {}
 ```
+
+如果返回 `waiting_for_shop_selection`，把店铺列表明确展示给用户，让用户回复：
+- 编号，例如 `1`
+- 店铺号，例如 `SAAS20240920889475`
+- `accountUserId`
+
+然后继续调用：
+
+```json
+login_flow {
+  "shop_index": 1
+}
+```
+
+或者：
+
+```json
+select_shop {
+  "enterprise_no": "SAAS20240920889475"
+}
+```
+
+只有在返回 `phase=logged_in` 后，才说明最终 `userToken` 已经拿到。
 
 ### 4. 开始业务编排
 
@@ -130,9 +156,30 @@ get_user_token {}
 
 生成二维码并启动后台等待扫码。
 
+### `login_flow`
+
+对话式登录入口。
+
+它会自动处理三种阶段：
+- `waiting_for_scan`：返回二维码
+- `waiting_for_shop_selection`：返回可选店铺列表
+- `logged_in`：返回最终 `userToken`
+
+优先推荐使用这个入口，而不是让模型手动拼接登录阶段。
+
+### `list_shops`
+
+获取扫码完成后的可选店铺列表。
+
+### `select_shop`
+
+根据 `shop_index`、`enterprise_no` 或 `account_user_id` 选择店铺，并换取最终 `userToken`。
+
 ### `get_user_token`
 
-获取已保存的 `userToken`。
+获取已保存的最终 `userToken`。
+
+如果当前仍停留在“已扫码但未选店”的阶段，这个工具不会假装成功，而是会明确提示还需要继续选店。
 
 ### `delete_session`
 
@@ -213,9 +260,17 @@ get_user_token {}
 - 如果需求在当前能力范围内，直接执行。
 - 如果做不到，必须直接告诉用户当前缺什么。
 
+当登录流程里出现“扫码完成但需要选店”时：
+
+- 不要把扫码 token 当成最终 `userToken`
+- 必须告诉用户还差选店这一步
+- 应优先调用 `login_flow {}` 获取店铺列表
+- 用户回复编号、店铺号或 `accountUserId` 后，再调用 `login_flow` 或 `select_shop`
+
 常见做不到的情况：
 - 还没有配置 `mcp_url`
 - 用户还没扫码登录，拿不到 `userToken`
+- 用户还没有完成选店，拿不到最终 `userToken`
 - 远端 swagger 里不存在对应接口
 - 远端接口需要的业务字段无法从上下文推断
 
@@ -228,7 +283,10 @@ cd scripts
 ./install-check.sh
 ./tool-call.sh set_mcp_config '{"mcp_url":"https://your-server.example.com/yst/mcp"}'
 ./tool-call.sh get_integration_status
-./tool-call.sh get_login_qrcode
+./tool-call.sh login_flow
+./tool-call.sh login_flow '{"shop_index":1}'
+./tool-call.sh list_shops
+./tool-call.sh select_shop '{"enterprise_no":"SAAS20240920889475"}'
 ./tool-call.sh get_user_token
 ./tool-call.sh get_api_catalog_summary
 ./tool-call.sh search_api_operations '{"query":"新增商品","sourceKey":"product"}'
