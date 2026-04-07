@@ -1,4 +1,0 @@
-interface:
-  display_name: "易奢堂 Codex"
-  short_description: "为 Codex 自动安装易奢堂 MCP，登录后台并通过远端 yst-mcp 编排库存业务"
-  default_prompt: "使用 $eshetang-codex 时，如果用户要求安装或修复易奢堂 MCP，优先执行 bash scripts/install-mcp.sh，并说明它会把默认地址 https://789.mcp.t.eshetang.com/yst/mcp 写入 Codex MCP 配置并注入 ESHETANG_MCP_URL；安装后提醒用户重启 Codex。业务语义上，商品默认按库存理解，优先使用 stock 相关接口。"

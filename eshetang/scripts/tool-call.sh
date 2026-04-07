@@ -18,6 +18,7 @@ if [ -z "$TOOL_NAME" ]; then
     echo "  select_shop        - 选择店铺并换取最终 userToken"
     echo "  get_user_token     - 获取已保存的 userToken"
     echo "  delete_session     - 删除本地登录态和二维码缓存"
+    echo "  install_mcp        - 自动识别或按指定助理类型安装 MCP 配置"
     echo "  set_mcp_config     - 当前仅提示通过平台安装脚本或环境变量配置远端 yst-mcp"
     echo "  get_mcp_config     - 读取当前 mcp 配置（环境变量优先，默认值兜底）"
     echo "  get_integration_status - 检查登录态 + mcp 连通性"

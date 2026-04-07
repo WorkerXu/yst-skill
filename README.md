@@ -1,40 +1,49 @@
 # yst-skill
 
-易奢堂多平台 skill 仓库。
+易奢堂统一 skill 仓库。
 
+现在仓库只推荐安装一个目录：
 
-## 可选 Skill
+- `eshetang/`
 
-- `eshetang-codex/`
-  - 面向 OpenAI Codex
-  - 自动写入 `~/.codex/config.toml`
-- `eshetang-workbuddy/`
-  - 面向 WorkBuddy
-  - 自动写入 `~/.workbuddy/mcp.json`
-- `eshetang-cursor/`
-  - 面向 Cursor
-  - 自动写入 `~/.cursor/mcp.json`
-- `eshetang-cc-code/`
-  - 面向 Claude Code
-  - 自动调用 `claude mcp add --scope user --transport http ...`
-- `eshetang-xiaolongxia/`
-  - 面向小龙虾 / mcporter 生态
-  - 自动写入 `~/.mcporter/mcporter.json`
+这个统一 skill 会同时负责：
+
+1. 易奢堂后台扫码登录
+2. 扫码后列出店铺并选店换取最终 `userToken`
+3. 在安装时自动识别或询问当前助理类型，并选择正确的 MCP 安装方式
+4. 通过远端 `yst-mcp` 搜索、查看、调用业务接口
 
 ## 默认 MCP 地址
 
-所有平台默认都使用：
+统一使用：
 
 `https://789.mcp.t.eshetang.com/yst/mcp`
 
-安装脚本会默认注入环境变量：
+## 统一安装方式
+
+进入 `eshetang/` 目录后执行：
 
 ```bash
-export ESHETANG_MCP_URL="https://789.mcp.t.eshetang.com/yst/mcp"
+./scripts/install-mcp.sh
 ```
 
-如果平台支持通过环境变量读取地址，则后续可以直接覆盖 `ESHETANG_MCP_URL`。
-如果平台不支持，则需要手动修改环境变量后重新执行安装脚本，或者直接修改配置文件中的默认值。
+安装脚本会：
+
+1. 询问你当前使用的助理类型
+2. 自动写入 `ESHETANG_MCP_URL`
+3. 按不同助理写入对应的 MCP 配置
+
+当前支持：
+
+- `codex`
+- `workbuddy`
+- `cursor`
+- `cc-code`
+- `xiaolongxia`
+
+更详细的安装说明见：
+
+- [eshetang/README.md](./eshetang/README.md)
 
 ## 业务语义约定
 
@@ -44,25 +53,9 @@ export ESHETANG_MCP_URL="https://789.mcp.t.eshetang.com/yst/mcp"
 - 新增商品 = 创建库存
 - 修改商品 = 修改库存
 
-因此各平台 skill 都会优先走 `stock` 相关接口。
+## 重要规则
 
-## 安装方式
+当模型通过远端 `yst-mcp` 编排接口时：
 
-请按平台安装对应目录，例如：
-
-- Codex：安装 `eshetang-codex`
-- WorkBuddy：安装 `eshetang-workbuddy`
-- Cursor：安装 `eshetang-cursor`
-- Claude Code：安装 `eshetang-cc-code`
-- 小龙虾：安装 `eshetang-xiaolongxia`
-
-每个目录里的 `README.md` 都详细说明了：
-
-1. 自动安装 MCP 的命令
-2. 会修改哪些本地文件
-3. 如何覆盖默认地址
-4. 安装完成后如何开始登录和调用业务接口
-
-## 兼容说明
-
-仓库中的旧目录 `eshetang/` 保留为历史兼容版本，但新的安装与分发应优先使用上述平台专用目录。
+- 非必填参数，用户没有明确表达时可以先忽略
+- 必填参数如果无法从上下文或前置接口结果唯一得到，必须先问用户，不能自行猜测

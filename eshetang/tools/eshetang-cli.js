@@ -2,9 +2,9 @@
 
 const fs = require("fs");
 const fsp = require("fs/promises");
+const os = require("os");
 const path = require("path");
-const { spawn } = require("child_process");
-const { chromium } = require("playwright");
+const { spawn, spawnSync } = require("child_process");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const DATA_DIR = path.join(ROOT_DIR, "data");
@@ -30,9 +30,17 @@ const MCP_URL_ENV_KEYS = [
   "ESHETANG_MCP_URL",
   "YST_MCP_URL"
 ];
+const SUPPORTED_ASSISTANT_TYPES = [
+  "codex",
+  "workbuddy",
+  "cursor",
+  "cc-code",
+  "xiaolongxia"
+];
 const DEFAULT_MCP_BUSINESS = "saas_mcp";
 const DEFAULT_MCP_BFF_BASE_URL = "https://bff.eshetang.com";
 let shutdownRequested = false;
+let playwrightChromium = null;
 
 async function main() {
   try {
@@ -54,6 +62,7 @@ async function main() {
             "select_shop",
             "get_user_token",
             "delete_session",
+            "install_mcp",
             "set_mcp_config",
             "get_mcp_config",
             "get_integration_status",
@@ -79,6 +88,8 @@ async function main() {
         return printJson(await getUserToken(args));
       case "delete_session":
         return printJson(await deleteSession(args));
+      case "install_mcp":
+        return printJson(await installMcp(args));
       case "set_mcp_config":
         return printJson(await setMcpConfig(args));
       case "get_mcp_config":
@@ -341,6 +352,7 @@ async function launchContext(options = {}) {
     useStorageState = true
   } = options;
 
+  const chromium = getPlaywrightChromium();
   const browser = await chromium.launch({ headless });
   const contextOptions = {};
   if (useStorageState && fileExists(STATE_FILE)) {
@@ -348,6 +360,20 @@ async function launchContext(options = {}) {
   }
   const context = await browser.newContext(contextOptions);
   return { browser, context };
+}
+
+function getPlaywrightChromium() {
+  if (playwrightChromium) {
+    return playwrightChromium;
+  }
+
+  try {
+    ({ chromium: playwrightChromium } = require("playwright"));
+  } catch (error) {
+    fail("未找到 playwright 依赖。请先执行 npm install 或 ./scripts/install-check.sh。");
+  }
+
+  return playwrightChromium;
 }
 
 function inferLoginPhase(currentUrl, tokenCookie) {
@@ -923,12 +949,39 @@ async function deleteSession() {
   };
 }
 
+async function installMcp(args = {}) {
+  const requestedType = normalizeAssistantType(args.assistant_type || args.platform || args.assistantType);
+  const detected = detectAssistantTypes();
+  const assistantType = requestedType || (detected.length === 1 ? detected[0] : null);
+
+  if (!assistantType) {
+    return {
+      ok: false,
+      needsUserInput: true,
+      status: "assistant_type_required",
+      message: detected.length > 1
+        ? `检测到多个可能的平台：${detected.join("、")}。请先告诉我你当前使用的是哪种助理，我再自动安装 MCP。`
+        : "暂时无法自动判断你当前使用的助理类型。请先告诉我你使用的是 codex、workbuddy、cursor、cc-code 还是 xiaolongxia。",
+      supportedAssistantTypes: SUPPORTED_ASSISTANT_TYPES,
+      detectedAssistantTypes: detected
+    };
+  }
+
+  const result = await installMcpForAssistant(assistantType);
+  return {
+    ok: true,
+    assistantType,
+    mcpUrl: DEFAULT_MCP_URL,
+    ...result
+  };
+}
+
 async function setMcpConfig(args) {
   return {
     ok: true,
     configured: true,
     config: publicMcpConfig(await loadMcpConfig()),
-    message: "当前版本不再通过对话写入 mcp_url。请使用对应平台的安装脚本或 MCP 管理工具；如需覆盖地址，请修改环境变量 ESHETANG_MCP_URL，或修改工具文件中的默认值。"
+    message: "当前版本不再通过对话写入 mcp_url。请优先使用 install_mcp 自动安装 MCP；如需覆盖地址，请修改环境变量 ESHETANG_MCP_URL，或修改工具文件中的默认值。"
   };
 }
 
@@ -1004,7 +1057,7 @@ async function callRemoteMcpToolEntry(args) {
 async function callRemoteMcpTool(toolName, toolArgs, options = {}) {
   const mcpConfig = options.mcpConfig || await loadMcpConfig();
   if (!mcpConfig || !mcpConfig.mcpUrl) {
-    fail("当前没有可用的 mcp_url。请安装对应平台的 eshetang skill 并完成 MCP 安装，或设置环境变量 ESHETANG_MCP_URL。");
+    fail("当前没有可用的 mcp_url。请先执行 install_mcp 完成 MCP 安装，或设置环境变量 ESHETANG_MCP_URL。");
   }
 
   const userTokenInfo = options.requireLogin === false ? await getSavedToken() : await getRequiredUserToken();
@@ -1020,6 +1073,216 @@ async function callRemoteMcpTool(toolName, toolArgs, options = {}) {
     usedUserToken: Boolean(userTokenInfo && userTokenInfo.userToken),
     result
   };
+}
+
+function normalizeAssistantType(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  const aliasMap = {
+    codex: "codex",
+    "openai-codex": "codex",
+    workbuddy: "workbuddy",
+    wb: "workbuddy",
+    cursor: "cursor",
+    "cc-code": "cc-code",
+    claude: "cc-code",
+    "claude-code": "cc-code",
+    xiaolongxia: "xiaolongxia",
+    "xiao-long-xia": "xiaolongxia",
+    mcporter: "xiaolongxia",
+    xlx: "xiaolongxia"
+  };
+
+  return aliasMap[normalized] || null;
+}
+
+function detectAssistantTypes() {
+  const home = os.homedir();
+  const detected = new Set();
+
+  if (process.env.CODEX_HOME || fileExists(path.join(home, ".codex", "config.toml")) || fileExists(path.join(home, ".codex"))) {
+    detected.add("codex");
+  }
+  if (fileExists(path.join(home, ".workbuddy")) || fileExists(path.join(home, ".workbuddy", "mcp.json"))) {
+    detected.add("workbuddy");
+  }
+  if (fileExists(path.join(home, ".cursor")) || fileExists(path.join(home, ".cursor", "mcp.json"))) {
+    detected.add("cursor");
+  }
+  if (commandExists("claude")) {
+    detected.add("cc-code");
+  }
+  if (fileExists(path.join(home, ".mcporter")) || fileExists(path.join(home, ".mcporter", "mcporter.json"))) {
+    detected.add("xiaolongxia");
+  }
+
+  return SUPPORTED_ASSISTANT_TYPES.filter((item) => detected.has(item));
+}
+
+async function installMcpForAssistant(assistantType) {
+  const home = os.homedir();
+  await ensureProfileExport(DEFAULT_MCP_URL);
+
+  switch (assistantType) {
+    case "codex":
+      return installCodexMcp(home);
+    case "workbuddy":
+      return installWorkbuddyMcp(home);
+    case "cursor":
+      return installCursorMcp(home);
+    case "cc-code":
+      return installClaudeCodeMcp();
+    case "xiaolongxia":
+      return installXiaolongxiaMcp(home);
+    default:
+      fail(`暂不支持的 assistant_type: ${assistantType}`);
+  }
+}
+
+async function ensureProfileExport(mcpUrl) {
+  const profile = pickShellProfile();
+  const line = `export ESHETANG_MCP_URL="${mcpUrl}"`;
+  await fsp.mkdir(path.dirname(profile), { recursive: true });
+
+  let text = "";
+  try {
+    text = await fsp.readFile(profile, "utf8");
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  if (!text.includes("export ESHETANG_MCP_URL=")) {
+    const prefix = text && !text.endsWith("\n") ? "\n" : "";
+    await fsp.writeFile(profile, `${text}${prefix}${line}\n`, "utf8");
+  }
+
+  return profile;
+}
+
+function pickShellProfile() {
+  const home = os.homedir();
+  const bashrc = path.join(home, ".bashrc");
+  if (fileExists(bashrc)) {
+    return bashrc;
+  }
+  return path.join(home, ".zshrc");
+}
+
+async function installCodexMcp(home) {
+  const configFile = path.join(home, ".codex", "config.toml");
+  await fsp.mkdir(path.dirname(configFile), { recursive: true });
+  let text = "";
+  try {
+    text = await fsp.readFile(configFile, "utf8");
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const block = `[mcp_servers.eshetang]\nurl = "${DEFAULT_MCP_URL}"\n`;
+  const pattern = /\n?\[mcp_servers\.eshetang\][\s\S]*?(?=\n\[[^\]]+\]|$)/m;
+  if (pattern.test(text)) {
+    text = text.replace(pattern, `\n${block}`);
+  } else {
+    if (text.trim() && !text.endsWith("\n")) {
+      text += "\n";
+    }
+    text += `\n${block}`;
+  }
+
+  await fsp.writeFile(configFile, text, "utf8");
+  return {
+    installed: true,
+    installMethod: "config_file",
+    configFile,
+    message: `已为 Codex 写入 MCP 配置：${configFile}`
+  };
+}
+
+async function installWorkbuddyMcp(home) {
+  const configFile = path.join(home, ".workbuddy", "mcp.json");
+  await fsp.mkdir(path.dirname(configFile), { recursive: true });
+  const json = await readJson(configFile, { mcpServers: {} });
+  json.mcpServers = json.mcpServers || {};
+  json.mcpServers.eshetang = { url: DEFAULT_MCP_URL, timeout: 600 };
+  await writeJson(configFile, json);
+  return {
+    installed: true,
+    installMethod: "config_file",
+    configFile,
+    message: `已为 WorkBuddy 写入 MCP 配置：${configFile}`
+  };
+}
+
+async function installCursorMcp(home) {
+  const configFile = path.join(home, ".cursor", "mcp.json");
+  await fsp.mkdir(path.dirname(configFile), { recursive: true });
+  const json = await readJson(configFile, { mcpServers: {} });
+  json.mcpServers = json.mcpServers || {};
+  json.mcpServers.eshetang = { url: DEFAULT_MCP_URL };
+  await writeJson(configFile, json);
+  return {
+    installed: true,
+    installMethod: "config_file",
+    configFile,
+    message: `已为 Cursor 写入 MCP 配置：${configFile}`
+  };
+}
+
+async function installClaudeCodeMcp() {
+  if (!commandExists("claude")) {
+    fail("未找到 claude 命令，请先安装 Claude Code。");
+  }
+
+  const result = spawnSync("claude", [
+    "mcp",
+    "add",
+    "--scope",
+    "user",
+    "--transport",
+    "http",
+    "eshetang",
+    DEFAULT_MCP_URL
+  ], {
+    encoding: "utf8"
+  });
+
+  if (result.status !== 0) {
+    fail(`Claude Code MCP 安装失败: ${(result.stderr || result.stdout || "").trim()}`);
+  }
+
+  return {
+    installed: true,
+    installMethod: "command",
+    command: `claude mcp add --scope user --transport http eshetang ${DEFAULT_MCP_URL}`,
+    message: "已为 Claude Code 安装 eshetang MCP。"
+  };
+}
+
+async function installXiaolongxiaMcp(home) {
+  const configFile = path.join(home, ".mcporter", "mcporter.json");
+  await fsp.mkdir(path.dirname(configFile), { recursive: true });
+  const json = await readJson(configFile, { mcpServers: {} });
+  json.mcpServers = json.mcpServers || {};
+  json.mcpServers.eshetang = { url: DEFAULT_MCP_URL, transportType: "streamable-http" };
+  await writeJson(configFile, json);
+  return {
+    installed: true,
+    installMethod: "config_file",
+    configFile,
+    message: `已为小龙虾/mcporter 写入 MCP 配置：${configFile}`
+  };
+}
+
+function commandExists(command) {
+  const result = spawnSync("sh", ["-lc", `command -v ${command}`], { encoding: "utf8" });
+  return result.status === 0;
 }
 
 async function loadMcpConfig() {

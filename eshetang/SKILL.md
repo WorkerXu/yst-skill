@@ -1,6 +1,6 @@
 ---
 name: eshetang
-description: "易奢堂后台管理工具。使用场景：扫码登录后台、在扫码后选择店铺并换取最终 userToken、通过环境变量或平台安装脚本读取远端 yst-mcp 地址、通过远端 MCP 搜索/查看/调用业务接口，并由模型自行分析接口定义完成业务编排。"
+description: "易奢堂后台管理工具。使用场景：扫码登录后台、在扫码后选择店铺并换取最终 userToken、在一个统一 skill 里自动安装不同助理平台的 MCP、通过远端 MCP 搜索/查看/调用业务接口，并由模型自行分析接口定义完成业务编排。"
 description_zh: "易奢堂扫码登录、选店换 token、MCP 配置与业务编排"
 description_en: "Eshetang login, shop selection, remote MCP config, and business orchestration"
 ---
@@ -17,7 +17,8 @@ description_en: "Eshetang login, shop selection, remote MCP config, and business
    - 让用户选择店铺
    - 用选中的店铺换取最终 `userToken`
 
-2. 远端业务编排：
+2. MCP 安装与远端业务编排：
+   - 在一个统一 skill 里自动识别或询问当前助理类型，并安装对应的 MCP 配置
    - 通过环境变量 `ESHETANG_MCP_URL` 或工具内置默认值连接远端 `yst-mcp`
    - 把本地 `userToken` 通过 MCP 初始化请求头带给远端
    - 让模型可以搜索接口、查看详情、名称换 ID、调用接口
@@ -87,6 +88,22 @@ invoke_api_operation
 
 ### 1. 先确认环境是否就绪
 
+如果用户希望“安装 MCP”或“接入易奢堂 MCP”，优先调用：
+
+```json
+install_mcp {}
+```
+
+行为规则：
+- 如果能自动识别当前助理类型，就直接安装
+- 如果不能唯一识别，就先问用户当前使用的是哪种助理
+- 支持的平台：
+  - `codex`
+  - `workbuddy`
+  - `cursor`
+  - `cc-code`
+  - `xiaolongxia`
+
 优先调用：
 
 ```json
@@ -147,6 +164,17 @@ select_shop {
 - `invoke_api_operation`
 
 ## 本地工具
+
+### `install_mcp`
+
+统一安装远端 `yst-mcp`。
+
+它会：
+- 优先尝试自动识别当前助理类型
+- 自动把 `ESHETANG_MCP_URL` 写入 shell profile
+- 按不同平台写入对应的 MCP 配置
+
+如果无法自动判断平台，会返回需要用户补充 `assistant_type` 的结果，这时你必须先问用户，不能自行猜测。
 
 ### `check_login_status`
 
@@ -258,6 +286,15 @@ select_shop {
 4. 用 `invoke_api_operation` 调这些名称查询接口，从返回结果里拿到需要的 ID
 5. 再调用目标查询/创建库存接口
 6. 如果远端 swagger 变化了，先刷新目录再继续
+
+## 必填参数规则
+
+这条规则必须严格执行：
+
+- 如果接口参数是必填项，但你无法从当前上下文、用户历史回复、接口默认值、或前置接口返回结果中明确得到它，就必须先询问用户。
+- 不能为了“继续流程”自行猜测品牌、分类、仓库、店铺、日期、状态、分页条件、业务类型等必填参数。
+- 只有非必填参数，在用户没有明确表达需要时，才可以先忽略。
+- 如果存在多个可能取值且无法唯一确定，也按“缺少必填信息”处理，必须先问用户，不要擅自选择。
 
 也就是说，这套 skill 的目标不是只处理“添加商品”，而是让 Claw 能基于现有能力自己编排完成用户需求。
 

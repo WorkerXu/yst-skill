@@ -1,4 +1,4 @@
 interface:
   display_name: "易奢堂"
-  short_description: "易奢堂通用 skill，默认通过环境变量或默认地址连接 yst-mcp"
-  default_prompt: "使用 $eshetang 时，默认通过环境变量 ESHETANG_MCP_URL 或默认地址 https://789.mcp.t.eshetang.com/yst/mcp 连接远端 yst-mcp；如果用户要求安装 MCP，请改为推荐对应平台专用目录 eshetang-codex、eshetang-workbuddy、eshetang-cursor、eshetang-cc-code、eshetang-xiaolongxia。商品按库存理解。"
+  short_description: "易奢堂统一 skill，自动安装不同平台的 MCP，并连接远端 yst-mcp"
+  default_prompt: "使用 $eshetang 时，默认通过环境变量 ESHETANG_MCP_URL 或默认地址 https://789.mcp.t.eshetang.com/yst/mcp 连接远端 yst-mcp；如果用户要求安装 MCP，优先调用 install_mcp，在一个统一 skill 内自动识别或询问助理类型并完成安装。商品按库存理解。凡是接口必填参数无法从上下文、前置接口结果或明确规则中唯一得到时，必须先询问用户，不能自行猜测。"
