@@ -1076,8 +1076,7 @@ async function inspectInstallPrerequisites() {
   const chromiumHint = fileExists(path.join(ROOT_DIR, "node_modules", "playwright", "package.json"))
     ? "执行 npx playwright install chromium，安装扫码登录需要的浏览器内核"
     : "完成 npm install 后执行 npx playwright install chromium，安装扫码登录需要的浏览器内核";
-  const chromiumInstalled = fileExists(path.join(os.homedir(), ".cache", "ms-playwright")) ||
-    fileExists(path.join(ROOT_DIR, "node_modules", ".cache", "ms-playwright"));
+  const chromiumInstalled = getPlaywrightBrowserCachePaths().some((cachePath) => fileExists(cachePath));
   if (!chromiumInstalled) {
     missing.push("chromium");
     steps.push(chromiumHint);
@@ -1094,6 +1093,36 @@ async function inspectInstallPrerequisites() {
     toolDescriptions,
     steps
   };
+}
+
+function getPlaywrightBrowserCachePaths() {
+  const home = os.homedir();
+  const paths = new Set();
+  const customBrowserPath = process.env.PLAYWRIGHT_BROWSERS_PATH;
+
+  if (typeof customBrowserPath === "string" && customBrowserPath.trim()) {
+    if (customBrowserPath.trim() === "0") {
+      paths.add(path.join(ROOT_DIR, "node_modules", ".cache", "ms-playwright"));
+    } else {
+      paths.add(path.resolve(customBrowserPath.trim()));
+    }
+  }
+
+  paths.add(path.join(ROOT_DIR, "node_modules", ".cache", "ms-playwright"));
+  paths.add(path.join(home, ".cache", "ms-playwright"));
+  paths.add(path.join(home, "Library", "Caches", "ms-playwright"));
+
+  const localAppData = process.env.LOCALAPPDATA;
+  if (typeof localAppData === "string" && localAppData.trim()) {
+    paths.add(path.join(localAppData.trim(), "ms-playwright"));
+  }
+
+  const appData = process.env.APPDATA;
+  if (typeof appData === "string" && appData.trim()) {
+    paths.add(path.join(appData.trim(), "ms-playwright"));
+  }
+
+  return Array.from(paths);
 }
 
 async function setMcpConfig(args) {
