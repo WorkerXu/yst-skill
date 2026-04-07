@@ -12,19 +12,19 @@ const OUTPUT_DIR = path.join(ROOT_DIR, "output");
 const STATE_FILE = path.join(DATA_DIR, "browser-state.json");
 const COOKIES_FILE = path.join(DATA_DIR, "cookies.json");
 const TOKEN_FILE = path.join(DATA_DIR, "user-token.json");
-const SCAN_TOKEN_FILE = path.join(DATA_DIR, "scan-token.json");
 const STATUS_FILE = path.join(DATA_DIR, "login-status.json");
-const FEEDBACK_QUEUE_FILE = path.join(DATA_DIR, "feedback-queue.jsonl");
+const MCP_CONFIG_FILE = path.join(DATA_DIR, "mcp-config.json");
 const PID_FILE = path.join(DATA_DIR, "login-worker.pid");
 const QR_IMAGE_FILE = path.join(OUTPUT_DIR, "login-qrcode.png");
 const QR_BASE64_FILE = path.join(DATA_DIR, "login-qrcode.txt");
 const WORKER_LOG_FILE = path.join(DATA_DIR, "login-worker.log");
 const LOGIN_URL = "https://pc.eshetang.com/account/login?redirect=%2F";
 const HOME_URL = "https://pc.eshetang.com/";
-const ACCOUNT_LIST_PATH = "/account/list";
 const DEFAULT_TIMEOUT_SECONDS = 240;
 const QR_SELECTOR = 'img[alt="qrcode"]';
 const USER_TOKEN_COOKIE = "userToken";
+const DEFAULT_MCP_BUSINESS = "saas_mcp";
+const DEFAULT_MCP_BFF_BASE_URL = "https://bff.eshetang.com";
 let shutdownRequested = false;
 
 async function main() {
@@ -42,30 +42,41 @@ async function main() {
           tools: [
             "check_login_status",
             "get_login_qrcode",
-            "login_flow",
-            "list_shops",
-            "select_shop",
             "get_user_token",
             "delete_session",
-            "report_unsatisfied_request"
+            "set_mcp_config",
+            "get_mcp_config",
+            "get_integration_status",
+            "refresh_api_catalog",
+            "get_api_catalog_summary",
+            "search_api_operations",
+            "get_api_operation_details",
+            "invoke_api_operation",
+            "call_remote_mcp_tool"
           ]
         });
       case "check_login_status":
         return printJson(await checkLoginStatus(args));
       case "get_login_qrcode":
         return printJson(await getLoginQrcode(args));
-      case "login_flow":
-        return printJson(await loginFlow(args));
-      case "list_shops":
-        return printJson(await listShops(args));
-      case "select_shop":
-        return printJson(await selectShop(args));
       case "get_user_token":
         return printJson(await getUserToken(args));
       case "delete_session":
         return printJson(await deleteSession(args));
-      case "report_unsatisfied_request":
-        return printJson(await reportUnsatisfiedRequest(args));
+      case "set_mcp_config":
+        return printJson(await setMcpConfig(args));
+      case "get_mcp_config":
+        return printJson(await getMcpConfig(args));
+      case "get_integration_status":
+        return printJson(await getIntegrationStatus(args));
+      case "refresh_api_catalog":
+      case "get_api_catalog_summary":
+      case "search_api_operations":
+      case "get_api_operation_details":
+      case "invoke_api_operation":
+        return printJson(await proxyRemoteTool(command, args));
+      case "call_remote_mcp_tool":
+        return printJson(await callRemoteMcpToolEntry(args));
       case "__qr_worker":
         await runQrWorker(args);
         return;
@@ -123,85 +134,6 @@ async function writeJson(filePath, value) {
 
 async function writeText(filePath, text) {
   await fsp.writeFile(filePath, text, "utf8");
-}
-
-async function appendText(filePath, text) {
-  await fsp.appendFile(filePath, text, "utf8");
-}
-
-function getScanTokenFromUrl(urlString) {
-  if (!urlString) {
-    return null;
-  }
-  try {
-    const url = new URL(urlString);
-    return url.searchParams.get("token") || url.searchParams.get("userToken");
-  } catch {
-    return null;
-  }
-}
-
-async function resolveScanToken(args = {}) {
-  if (typeof args.scan_token === "string" && args.scan_token.trim()) {
-    return args.scan_token.trim();
-  }
-
-  const savedScanToken = await readJson(SCAN_TOKEN_FILE, null);
-  if (savedScanToken && typeof savedScanToken.scanToken === "string" && savedScanToken.scanToken.trim()) {
-    return savedScanToken.scanToken.trim();
-  }
-
-  const status = await readJson(STATUS_FILE, null);
-  const fromStatus = getScanTokenFromUrl(status && status.currentUrl);
-  if (fromStatus) {
-    return fromStatus;
-  }
-
-  return null;
-}
-
-async function apiGetJson(pathname, query = {}) {
-  const url = new URL(pathname, "https://bff.eshetang.com");
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== null && value !== "") {
-      url.searchParams.set(key, String(value));
-    }
-  }
-
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      "accept": "application/json, text/plain, */*",
-      "origin": "https://pc.eshetang.com",
-      "referer": "https://pc.eshetang.com/"
-    }
-  });
-
-  const text = await response.text();
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    fail(`unexpected non-json response from ${url.pathname}`);
-  }
-
-  return {
-    ok: response.ok,
-    status: response.status,
-    body: data
-  };
-}
-
-async function validateFinalUserToken(userToken) {
-  if (!userToken) {
-    return false;
-  }
-
-  const result = await apiGetJson("/account/v3/multiple/account/list", {
-    userToken
-  });
-
-  return result.ok && result.body && result.body.code === 200;
 }
 
 async function removeFile(filePath) {
@@ -327,19 +259,6 @@ async function launchContext(options = {}) {
   return { browser, context };
 }
 
-function inferLoginPhase(currentUrl, tokenCookie) {
-  if (tokenCookie && tokenCookie.value) {
-    return "logged_in";
-  }
-  if (currentUrl.includes(ACCOUNT_LIST_PATH)) {
-    return "waiting_for_shop_selection";
-  }
-  if (currentUrl.includes("/account/login")) {
-    return "waiting_for_scan";
-  }
-  return "unknown";
-}
-
 async function checkLoginStatus() {
   const savedToken = await getSavedToken();
   if (!savedToken) {
@@ -362,8 +281,7 @@ async function checkLoginStatus() {
     const cookies = await context.cookies();
     const cookie = extractUserTokenFromCookies(cookies);
     const currentUrl = page.url();
-    const phase = inferLoginPhase(currentUrl, cookie);
-    const isLoggedIn = phase === "logged_in";
+    const isLoggedIn = Boolean(cookie && cookie.value) && !currentUrl.includes("/account/login");
 
     if (isLoggedIn) {
       await saveSessionArtifacts(context, { source: "check_login_status" });
@@ -372,7 +290,6 @@ async function checkLoginStatus() {
     return {
       ok: true,
       isLoggedIn,
-      status: phase,
       currentUrl,
       userToken: isLoggedIn ? cookie.value : null,
       qrcodePath: fileExists(QR_IMAGE_FILE) ? QR_IMAGE_FILE : null
@@ -418,267 +335,6 @@ async function getLoginQrcode(args) {
   };
 }
 
-async function loginFlow(args = {}) {
-  const selectedIndex = Number.isInteger(args.shop_index)
-    ? args.shop_index
-    : Number.isFinite(Number(args.shop_index))
-      ? Number(args.shop_index)
-      : null;
-
-  const selectedAccountUserId = args.account_user_id ? Number(args.account_user_id) : null;
-  const selectedEnterpriseNo = typeof args.enterprise_no === "string" ? args.enterprise_no.trim() : "";
-
-  if (selectedIndex || selectedAccountUserId || selectedEnterpriseNo) {
-    const result = await selectShop({
-      scan_token: args.scan_token,
-      shop_index: selectedIndex || undefined,
-      account_user_id: selectedAccountUserId || undefined,
-      enterprise_no: selectedEnterpriseNo || undefined
-    });
-    if (result.ok) {
-      return {
-        ok: true,
-        phase: "logged_in",
-        done: true,
-        message: `已为你选中店铺并拿到 userToken。当前账号 ID: ${result.accountUserId}`,
-        userToken: result.userToken
-      };
-    }
-    return {
-      ...result,
-      phase: "shop_selection_failed",
-      done: false
-    };
-  }
-
-  const tokenInfo = await getSavedToken();
-  if (tokenInfo && await validateFinalUserToken(tokenInfo.userToken)) {
-    return {
-      ok: true,
-      phase: "logged_in",
-      done: true,
-      message: "当前已经登录完成，可以直接继续使用商品相关 MCP。",
-      userToken: tokenInfo.userToken
-    };
-  }
-
-  const status = await readJson(STATUS_FILE, null);
-  if (status && status.status === "waiting_for_shop_selection") {
-    const shopsResult = await listShops({
-      scan_token: args.scan_token
-    });
-    if (!shopsResult.ok) {
-      return {
-        ...shopsResult,
-        phase: "waiting_for_shop_selection",
-        done: false
-      };
-    }
-
-    return {
-      ok: true,
-      phase: "waiting_for_shop_selection",
-      done: false,
-      message: "扫码已完成，还差最后一步选店。请让用户回复店铺编号、店铺号或 accountUserId，我会继续自动登录。",
-      shops: shopsResult.shops
-    };
-  }
-
-  const qrcodeResult = await getLoginQrcode(args);
-  if (!qrcodeResult.ok) {
-    return {
-      ...qrcodeResult,
-      phase: "qrcode_failed",
-      done: false
-    };
-  }
-
-  return {
-    ok: true,
-    phase: "waiting_for_scan",
-    done: false,
-    message: "请先扫码登录；扫码完成后我会继续帮你列出可选店铺。",
-    qrcodePath: qrcodeResult.qrcodePath,
-    img: qrcodeResult.img,
-    timeout: qrcodeResult.timeout
-  };
-}
-
-async function listShops(args = {}) {
-  const scanToken = await resolveScanToken(args);
-  if (!scanToken) {
-    return {
-      ok: false,
-      status: "missing_scan_token",
-      message: "当前没有可用的扫码 token，请先执行 get_login_qrcode 并完成扫码。"
-    };
-  }
-
-  const result = await apiGetJson("/account/v3/multiple/account/list", {
-    userToken: scanToken
-  });
-
-  if (!result.ok || result.body.code !== 200) {
-    return {
-      ok: false,
-      status: "list_shops_failed",
-      scanToken,
-      response: result.body
-    };
-  }
-
-  const list = Array.isArray(result.body.data && result.body.data.list)
-    ? result.body.data.list
-    : [];
-
-  await writeJson(SCAN_TOKEN_FILE, {
-    scanToken,
-    updatedAt: safeDateString()
-  });
-
-  await writeJson(STATUS_FILE, {
-    ...(await readJson(STATUS_FILE, {})),
-    status: list.length > 0 ? "waiting_for_shop_selection" : "no_shop_available",
-    updatedAt: safeDateString(),
-    currentUrl: `https://pc.eshetang.com/account/list?token=${scanToken}&redirect=%2F`,
-    shops: list
-  });
-
-  return {
-    ok: true,
-    status: "waiting_for_shop_selection",
-    scanToken,
-    total: list.length,
-    shops: list.map((shop, index) => ({
-      index: index + 1,
-      accountUserId: shop.accountUserId,
-      enterpriseNo: shop.enterpriseNo,
-      name: shop.name,
-      provinceName: shop.provinceName || "",
-      accountIsManager: shop.accountIsManager,
-      accountUserIdentityTypeName: shop.accountUserIdentityTypeName || ""
-    }))
-  };
-}
-
-async function selectShop(args = {}) {
-  const scanToken = await resolveScanToken(args);
-  if (!scanToken) {
-    return {
-      ok: false,
-      status: "missing_scan_token",
-      message: "当前没有可用的扫码 token，请先执行 get_login_qrcode 并完成扫码。"
-    };
-  }
-
-  let accountUserId = args.account_user_id;
-  if (!accountUserId && Number.isInteger(args.shop_index)) {
-    const shopsResult = await listShops({ scan_token: scanToken });
-    if (!shopsResult.ok) {
-      return shopsResult;
-    }
-    const matched = shopsResult.shops.find((shop) => shop.index === args.shop_index);
-    if (!matched) {
-      return {
-        ok: false,
-        status: "shop_not_found",
-        message: `未找到编号为 ${args.shop_index} 的店铺。`
-      };
-    }
-    accountUserId = matched.accountUserId;
-  }
-
-  if (!accountUserId && typeof args.enterprise_no === "string") {
-    const shopsResult = await listShops({ scan_token: scanToken });
-    if (!shopsResult.ok) {
-      return shopsResult;
-    }
-    const matched = shopsResult.shops.find((shop) => shop.enterpriseNo === args.enterprise_no);
-    if (!matched) {
-      return {
-        ok: false,
-        status: "shop_not_found",
-        message: `未找到店铺号为 ${args.enterprise_no} 的店铺。`
-      };
-    }
-    accountUserId = matched.accountUserId;
-  }
-
-  if (!accountUserId) {
-    return {
-      ok: false,
-      status: "missing_shop_selector",
-      message: "请选择店铺后再继续，需要提供 account_user_id、shop_index 或 enterprise_no。"
-    };
-  }
-
-  const loginResult = await apiGetJson("/account/v3/login/enterprise", {
-    accountUserId,
-    userToken: scanToken
-  });
-
-  if (!loginResult.ok || loginResult.body.code !== 200) {
-    return {
-      ok: false,
-      status: "select_shop_failed",
-      response: loginResult.body
-    };
-  }
-
-  const userToken =
-    loginResult.body &&
-    loginResult.body.data &&
-    loginResult.body.data.userToken;
-
-  if (!userToken) {
-    return {
-      ok: false,
-      status: "missing_user_token",
-      response: loginResult.body
-    };
-  }
-
-  const tokenInfo = {
-    userToken,
-    domain: ".pc.eshetang.com",
-    source: "select_shop_api",
-    updatedAt: safeDateString(),
-    accountUserId,
-    scanToken
-  };
-  await writeJson(TOKEN_FILE, tokenInfo);
-  await writeJson(SCAN_TOKEN_FILE, {
-    scanToken,
-    updatedAt: safeDateString()
-  });
-  await writeJson(COOKIES_FILE, [
-    {
-      name: USER_TOKEN_COOKIE,
-      value: userToken,
-      domain: ".pc.eshetang.com",
-      path: "/",
-      expires: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
-      httpOnly: false,
-      secure: false,
-      sameSite: "Lax"
-    }
-  ]);
-  await writeJson(STATUS_FILE, {
-    ...(await readJson(STATUS_FILE, {})),
-    status: "logged_in",
-    updatedAt: safeDateString(),
-    accountUserId,
-    currentUrl: HOME_URL
-  });
-
-  return {
-    ok: true,
-    status: "logged_in",
-    accountUserId,
-    userToken
-  };
-}
-
 async function waitForQrMaterial(timeoutMs) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -692,11 +348,10 @@ async function waitForQrMaterial(timeoutMs) {
 
 async function spawnQrWorker(args) {
   const timeoutSeconds = Number(args.timeout_seconds) > 0 ? Number(args.timeout_seconds) : DEFAULT_TIMEOUT_SECONDS;
-  const showBrowser = Boolean(args.show_browser);
   const workerArgs = [
     path.join(ROOT_DIR, "tools", "eshetang-cli.js"),
     "__qr_worker",
-    JSON.stringify({ timeout_seconds: timeoutSeconds, show_browser: showBrowser })
+    JSON.stringify({ timeout_seconds: timeoutSeconds })
   ];
 
   const logFd = fs.openSync(WORKER_LOG_FILE, "a");
@@ -721,7 +376,7 @@ async function runQrWorker(args) {
     shutdownRequested = true;
   });
   const { browser, context } = await launchContext({
-    headless: !(Boolean(args.show_browser) || process.env.ESHETANG_HEADLESS === "false"),
+    headless: process.env.ESHETANG_HEADLESS !== "false",
     useStorageState: true
   });
   const page = await context.newPage();
@@ -732,15 +387,12 @@ async function runQrWorker(args) {
 
     let cookies = await context.cookies();
     let tokenCookie = extractUserTokenFromCookies(cookies);
-    let currentUrl = page.url();
-    let phase = inferLoginPhase(currentUrl, tokenCookie);
-    if (phase === "logged_in") {
+    if (tokenCookie && tokenCookie.value && !page.url().includes("/account/login")) {
       await saveSessionArtifacts(context, { source: "worker_already_logged_in" });
       await writeJson(STATUS_FILE, {
         status: "logged_in",
         updatedAt: safeDateString(),
-        timeoutSeconds,
-        currentUrl
+        timeoutSeconds
       });
       return;
     }
@@ -757,7 +409,6 @@ async function runQrWorker(args) {
       createdAt: safeDateString(workerStartedAt),
       updatedAt: safeDateString(),
       timeoutSeconds,
-      showBrowser: Boolean(args.show_browser),
       expiresAt: new Date(workerStartedAt.getTime() + timeoutMs).toISOString(),
       qrcodePath: QR_IMAGE_FILE
     });
@@ -770,22 +421,8 @@ async function runQrWorker(args) {
       await delay(1000);
       cookies = await context.cookies();
       tokenCookie = extractUserTokenFromCookies(cookies);
-      currentUrl = page.url();
-      phase = inferLoginPhase(currentUrl, tokenCookie);
-
-      if (phase === "waiting_for_shop_selection") {
-        await writeJson(STATUS_FILE, {
-          status: "waiting_for_shop_selection",
-          updatedAt: safeDateString(),
-          timeoutSeconds,
-          currentUrl,
-          qrcodePath: fileExists(QR_IMAGE_FILE) ? QR_IMAGE_FILE : null,
-          showBrowser: Boolean(args.show_browser),
-          message: "扫码已通过，但还需要在 PC 页面完成店铺选择后才能拿到 userToken。"
-        });
-      }
-
-      if (phase === "logged_in") {
+      const currentUrl = page.url();
+      if (tokenCookie && tokenCookie.value && !currentUrl.includes("/account/login")) {
         await saveSessionArtifacts(context, { source: "qr_scan_login" });
         await writeJson(STATUS_FILE, {
           status: "logged_in",
@@ -833,23 +470,20 @@ async function getUserToken() {
     };
   }
 
-  const isValid = await validateFinalUserToken(tokenInfo.userToken);
-  if (!isValid) {
-    const liveStatus = await checkLoginStatus();
+  const liveStatus = await checkLoginStatus();
+  if (!liveStatus.isLoggedIn || !liveStatus.userToken) {
     return {
       ok: false,
       isLoggedIn: false,
-      status: liveStatus.status || "logged_out",
-      message: liveStatus.status === "waiting_for_shop_selection"
-        ? "扫码已完成，但还需要先完成店铺选择，完成后再重新获取 userToken。"
-        : "本地存在旧 token，但在线校验未通过，请重新执行 get_login_qrcode。"
+      status: "logged_out",
+      message: "本地存在旧 token，但在线校验未通过，请重新执行 get_login_qrcode。"
     };
   }
 
   return {
     ok: true,
     isLoggedIn: true,
-    userToken: tokenInfo.userToken,
+    userToken: liveStatus.userToken,
     domain: tokenInfo.domain || null,
     expires: tokenInfo.expires || null,
     updatedAt: tokenInfo.updatedAt || null,
@@ -870,7 +504,6 @@ async function deleteSession() {
     STATE_FILE,
     COOKIES_FILE,
     TOKEN_FILE,
-    SCAN_TOKEN_FILE,
     STATUS_FILE,
     PID_FILE,
     QR_IMAGE_FILE,
@@ -886,33 +519,268 @@ async function deleteSession() {
   };
 }
 
-async function reportUnsatisfiedRequest(args) {
-  const taskSummary = typeof args.task_summary === "string" ? args.task_summary.trim() : "";
-  const reason = typeof args.reason === "string" ? args.reason.trim() : "";
-  const explicitSkill = args.explicit_skill_invocation !== false;
-
-  if (!taskSummary) {
-    fail("task_summary is required");
+async function setMcpConfig(args) {
+  const mcpUrl = typeof args.mcp_url === "string" ? args.mcp_url.trim() : "";
+  if (!mcpUrl) {
+    fail("缺少 mcp_url，请传入远端 yst-mcp 的完整地址。");
   }
 
-  const payload = {
-    source: "eshetang-skill",
-    explicitSkillInvocation: explicitSkill,
-    taskSummary,
-    reason: reason || "skill_unable_to_complete",
-    createdAt: safeDateString()
+  const config = {
+    mcpUrl,
+    business: DEFAULT_MCP_BUSINESS,
+    bffBaseUrl: DEFAULT_MCP_BFF_BASE_URL,
+    updatedAt: safeDateString()
   };
 
-  await appendText(FEEDBACK_QUEUE_FILE, `${JSON.stringify(payload)}\n`);
+  await writeJson(MCP_CONFIG_FILE, config);
 
   return {
     ok: true,
-    reported: false,
-    queued: true,
-    message: "已写入本地反馈队列，后续可由 yst-mcp 反馈接口统一上报。",
-    queueFile: FEEDBACK_QUEUE_FILE,
-    payload
+    configured: true,
+    config: publicMcpConfig(config)
   };
+}
+
+async function getMcpConfig() {
+  const config = await loadMcpConfig();
+  return {
+    ok: true,
+    configured: Boolean(config),
+    config: config ? publicMcpConfig(config) : null
+  };
+}
+
+async function getIntegrationStatus() {
+  const config = await loadMcpConfig();
+  const token = await getSavedToken();
+  const loginStatus = await readJson(STATUS_FILE, null);
+  let remoteCatalog = null;
+  let remoteError = null;
+
+  if (config) {
+    try {
+      const remote = await callRemoteMcpTool("get_api_catalog_summary", {}, {
+        requireLogin: false,
+        mcpConfig: config
+      });
+      remoteCatalog = remote.result || null;
+    } catch (error) {
+      remoteError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  return {
+    ok: true,
+    login: {
+      hasUserToken: Boolean(token && token.userToken),
+      userTokenPreview: token && token.userToken ? `${token.userToken.slice(0, 8)}...` : null,
+      status: loginStatus ? loginStatus.status : "unknown",
+      tokenFile: fileExists(TOKEN_FILE) ? TOKEN_FILE : null
+    },
+    mcp: {
+      configured: Boolean(config),
+      config: config ? publicMcpConfig(config) : null,
+      remoteCatalog,
+      remoteError
+    }
+  };
+}
+
+async function proxyRemoteTool(toolName, args) {
+  const requireLogin = ![
+    "refresh_api_catalog",
+    "get_api_catalog_summary",
+    "search_api_operations",
+    "get_api_operation_details"
+  ].includes(toolName);
+
+  return callRemoteMcpTool(toolName, args, {
+    requireLogin
+  });
+}
+
+async function callRemoteMcpToolEntry(args) {
+  const toolName = typeof args.tool_name === "string" ? args.tool_name.trim() : "";
+  if (!toolName) {
+    fail("缺少 tool_name。");
+  }
+
+  return callRemoteMcpTool(toolName, args.tool_args || {}, {
+    requireLogin: args.require_login !== false
+  });
+}
+
+async function callRemoteMcpTool(toolName, toolArgs, options = {}) {
+  const mcpConfig = options.mcpConfig || await loadMcpConfig();
+  if (!mcpConfig || !mcpConfig.mcpUrl) {
+    fail("尚未配置 mcp_url，请先执行 set_mcp_config。");
+  }
+
+  const userTokenInfo = options.requireLogin === false ? await getSavedToken() : await getRequiredUserToken();
+  const headers = buildRemoteHeaders(mcpConfig, userTokenInfo);
+  const sessionId = await initializeRemoteMcp(mcpConfig.mcpUrl, headers);
+  await notifyRemoteInitialized(mcpConfig.mcpUrl, sessionId, headers);
+  const result = await invokeRemoteTool(mcpConfig.mcpUrl, sessionId, headers, toolName, toolArgs);
+
+  return {
+    ok: true,
+    mcpUrl: mcpConfig.mcpUrl,
+    toolName,
+    usedUserToken: Boolean(userTokenInfo && userTokenInfo.userToken),
+    result
+  };
+}
+
+async function loadMcpConfig() {
+  const fromFile = await readJson(MCP_CONFIG_FILE, null);
+  if (fromFile && fromFile.mcpUrl) {
+    return fromFile;
+  }
+
+  if (process.env.ESHETANG_MCP_URL) {
+    return {
+      mcpUrl: process.env.ESHETANG_MCP_URL,
+      business: DEFAULT_MCP_BUSINESS,
+      bffBaseUrl: DEFAULT_MCP_BFF_BASE_URL,
+      updatedAt: null
+    };
+  }
+
+  return null;
+}
+
+async function getRequiredUserToken() {
+  const tokenInfo = await getUserToken();
+  if (!tokenInfo.ok || !tokenInfo.userToken) {
+    fail(tokenInfo.message || "当前没有可用的 userToken，请先扫码登录。");
+  }
+  return tokenInfo;
+}
+
+function buildRemoteHeaders(mcpConfig, userTokenInfo) {
+  const headers = {
+    "content-type": "application/json",
+    "accept": "application/json, text/event-stream",
+    "x-yst-business": mcpConfig.business || DEFAULT_MCP_BUSINESS,
+    "x-yst-bff-base-url": mcpConfig.bffBaseUrl || DEFAULT_MCP_BFF_BASE_URL
+  };
+
+  if (userTokenInfo && userTokenInfo.userToken) {
+    headers["x-yst-user-token"] = userTokenInfo.userToken;
+  }
+
+  return headers;
+}
+
+function publicMcpConfig(config) {
+  return {
+    mcpUrl: config.mcpUrl,
+    updatedAt: config.updatedAt || null
+  };
+}
+
+async function initializeRemoteMcp(mcpUrl, headers) {
+  const response = await fetch(mcpUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-03-26",
+        capabilities: {},
+        clientInfo: {
+          name: "eshetang-skill",
+          version: "0.2.0"
+        }
+      }
+    })
+  });
+
+  const payload = await safeParseJson(response);
+  if (!response.ok || payload.error) {
+    fail(`初始化远端 MCP 失败: ${payload.error ? payload.error.message : response.statusText}`);
+  }
+
+  const sessionId = response.headers.get("mcp-session-id");
+  if (!sessionId) {
+    fail("远端 MCP 未返回 Mcp-Session-Id。");
+  }
+  return sessionId;
+}
+
+async function notifyRemoteInitialized(mcpUrl, sessionId, headers) {
+  await fetch(mcpUrl, {
+    method: "POST",
+    headers: {
+      ...headers,
+      "mcp-session-id": sessionId
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+      params: {}
+    })
+  });
+}
+
+async function invokeRemoteTool(mcpUrl, sessionId, headers, toolName, toolArgs) {
+  const response = await fetch(mcpUrl, {
+    method: "POST",
+    headers: {
+      ...headers,
+      "mcp-session-id": sessionId
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: toolName,
+        arguments: toolArgs || {}
+      }
+    })
+  });
+
+  const payload = await safeParseJson(response);
+  if (!response.ok || payload.error) {
+    fail(`调用远端工具失败: ${payload.error ? payload.error.message : response.statusText}`);
+  }
+
+  const text = payload.result?.content?.[0]?.text;
+  if (typeof text === "string") {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { rawText: text };
+    }
+  }
+
+  return payload.result || payload;
+}
+
+async function safeParseJson(response) {
+  const text = await response.text();
+  const normalizedText = unwrapSsePayload(text);
+  try {
+    return normalizedText ? JSON.parse(normalizedText) : {};
+  } catch {
+    return { rawText: normalizedText || text };
+  }
+}
+
+function unwrapSsePayload(text) {
+  if (typeof text !== "string" || !text.trim().startsWith("event:")) {
+    return text;
+  }
+
+  const dataLines = text
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim());
+
+  return dataLines.join("\n");
 }
 
 main();
