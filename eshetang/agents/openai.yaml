@@ -1,4 +1,4 @@
 interface:
   display_name: "易奢堂"
-  short_description: "扫码登录易奢堂、选店并提取 userToken"
-  default_prompt: "使用 $eshetang 完成易奢堂扫码登录；如果进入选店步骤，请把店铺列表编号后展示给我，并把我回复的编号、店铺号或店铺名解析成登录动作。"
+  short_description: "扫码登录易奢堂、配置远端 yst-mcp，并通过远端接口完成业务编排"
+  default_prompt: "使用 $eshetang 先检查集成状态；如果还没配置远端 MCP，就引导或执行 set_mcp_config；如果还没登录，就执行 get_login_qrcode 并等待我扫码；拿到 userToken 后，通过远端 yst-mcp 的 search_api_operations、get_api_operation_details、invoke_api_operation 完成我的业务请求。"
