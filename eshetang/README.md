@@ -89,6 +89,8 @@
 
 它返回的是脱敏后的最近 3 次成功调用样例，只能拿来参考结构，不能直接复用里面的值。
 
+另外，`invoke_api_operation` 如果调用失败，skill 工具层会直接返回一个结构化的 `nextStepSuggestion`，里面会附上建议调用的 `get_api_operation_latest_example` 参数，方便继续排错。
+
 ## 当前 recipe
 
 - `inventory_add_goods`
