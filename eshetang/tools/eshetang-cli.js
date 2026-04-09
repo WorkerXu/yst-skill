@@ -90,8 +90,15 @@ const SCENARIO_RECIPES = [
       "imageList 至少 1 张，否则页面直接阻止提交。",
       "finenessValueId 必选。",
       "description 必填。",
+      "goodsSource 和 onlineStatus 都是枚举必填，不能传自然语言原值。",
+      "status 在新增库存时固定按在库传 1。",
       "goodsSource 必选；当 goodsSource=PLEDGE 时必须提供 pledge.pledgeExpireTime。",
-      "当 syncRangList 包含 PEER_CIRCLE 时，priceList 中 settingValueId=1973 的同行价必填且不能以 0 开头。"
+      "syncRangList 在服务层接受的枚举包含 PEER_CIRCLE、WECHAT_ALBUM、PAIPAI、GOO_FISH；不要把页面只展示的子集误当成完整枚举。",
+      "priceList、costList、annex.annexList 里的 settingValueId/settingValueName 必须成对提交。",
+      "imageList、detailsImageList、costList.imageList、recycle.imageList、annex.imageList 中每个媒体项至少要有 fileUrl。",
+      "当 syncRangList 包含 PEER_CIRCLE 时，priceList 中 settingValueId=1973 的同行价必填且不能以 0 开头。",
+      "当 syncRangList 包含 WECHAT_ALBUM 时，onlineStatus 不能为 OFFLINE；后端会直接拒绝“仅入库同步微购相册”。",
+      "服务层会把 name/description 中的字面量 ' null ' 替换为空格；agent 不应主动拼接或保留这种脏文本。"
     ],
     conditionalRequiredUserInputs: [
       {
@@ -143,7 +150,7 @@ const SCENARIO_RECIPES = [
         field: "warehouseId + reservoirId",
         source: "warehouse-reservoir selector",
         api: { method: "GET", path: "/stock/inventory/warehouse-reservoir/list" },
-        note: "仓库和库位通过树形选择得到；未分配位置时 reservoirId=0。"
+        note: "仓库和库位通过树形选择得到；未分配位置时 reservoirId=0。服务层查询默认 page=1、pageSize=10，可附带 isCommonUse/warehouseStatus/reservoirStatus 做启用态过滤。"
       },
       {
         field: "recycle.settingValueId / annex / priceList",
@@ -160,7 +167,7 @@ const SCENARIO_RECIPES = [
         field: "new tag creation",
         source: "inventory tag create",
         api: { method: "POST", path: "/stock/inventory/tag/create" },
-        note: "当用户输入的新标签在现有列表中不存在时，先创建标签，再把返回结果回填进 tagList。"
+        note: "当用户输入的新标签在现有列表中不存在时，先创建标签，再把返回结果回填进 tagList。服务层实际需要 businessNo/operatorId/operatorName/tagName，其中只有 tagName 需要用户提供。"
       },
       {
         field: "categoryId + brandId + seriesId + skuId optional autofill",
@@ -207,20 +214,19 @@ const SCENARIO_RECIPES = [
       "分类参数：argumentList",
       "价格/成本：originalCost, costList, priceList",
       "库存位置：warehouseId, reservoirId",
-      "扩展信息：remarkList, tagList, annex, recycle, count, identifier, seriesNumber, syncRangList",
-      "条件字段：pledge, goodsContact"
+      "扩展信息：remarkList, tagList, annex, recycle, count, identifier, listImage, seriesNumber, relateOrderNo, sheetSn, source, syncRangList",
+      "条件字段：pledge, goodsContact",
+      "后端自动补充：operatorId/operatorName/businessNo；若有 pledge，还会自动补 pledgeOperatorId/pledgeOperatorName"
     ],
     operationBindings: [
       "StockEnumController_shopComboBox",
       "InventoryStockController_argumentList",
       "InventoryTagController_list",
-      "InventoryTagController_create",
       "BrandController_group",
       "SeriesController_list",
       "SkuController_listV2",
-      "InventoryWarehouseController_reservoirList",
-      "SkuController_imageRecognizeSpuSku",
-      "PostController_analysisContent",
+      "InventoryWarehouseReservoirController_list",
+      "ProductImageController_spuSkuList",
       "InventoryStockController_create"
     ],
     payloadBuilders: ["buildCreateStockPayload"],
@@ -269,10 +275,17 @@ const SCENARIO_RECIPES = [
     ],
     validationRules: [
       "编辑流程先用 detail 回填，再在变更字段上重跑依赖接口，不能直接沿用旧 ID 猜测。",
+      "stockNo 必填，warehouseId 必填。",
       "如果 categoryId 改变，必须重新获取 argumentList，并重新确认 brandId/seriesId/skuId。",
       "如果 brandId 改变，必须重新获取 series 列表和 sku 列表。",
       "如果 seriesId 改变，必须重新获取 sku 列表。",
-      "提交前所有新外部文件地址都必须先上传并替换。"
+      "syncRangList 在服务层接受的枚举包含 PEER_CIRCLE、WECHAT_ALBUM、PAIPAI、GOO_FISH；不要把页面只展示的子集误当成完整枚举。",
+      "priceList、costList、annex.annexList 里的 settingValueId/settingValueName 必须成对提交。",
+      "imageList、detailsImageList、costList.imageList、recycle.imageList、annex.imageList 中每个媒体项至少要有 fileUrl。",
+      "提交前所有新外部文件地址都必须先上传并替换。",
+      "当 syncRangList 包含 WECHAT_ALBUM 时，onlineStatus 不能为 OFFLINE；后端会直接拒绝“仅保存同步微购相册”。",
+      "update payload 必须显式带 stockNo 和 warehouseId；warehouseId 在更新接口里是必填。",
+      "服务层不会像 create 一样重写 name/description，编辑时应直接提交用户确认后的最终文案。"
     ],
     fieldSources: [
       {
@@ -298,7 +311,8 @@ const SCENARIO_RECIPES = [
       {
         field: "warehouseId + reservoirId optional reselection",
         source: "warehouse-reservoir selector",
-        api: { method: "GET", path: "/stock/inventory/warehouse-reservoir/list" }
+        api: { method: "GET", path: "/stock/inventory/warehouse-reservoir/list" },
+        note: "服务层查询默认 page=1、pageSize=10，可附带 isCommonUse/warehouseStatus/reservoirStatus 做启用态过滤。"
       }
     ],
     interfaceSequence: [
@@ -324,17 +338,19 @@ const SCENARIO_RECIPES = [
     finalPayloadShape: [
       "update payload 与 create 基本同构，但以 detail 返回值为基线增量修改",
       "必须携带 stockNo 指向被编辑库存",
-      "用户未修改的字段沿用 detail 回填值，用户修改过的字段按最新选择器结果覆盖"
+      "必须显式携带 warehouseId；用户未修改的字段沿用 detail 回填值，用户修改过的字段按最新选择器结果覆盖",
+      "可透传但不常改的扩展字段：listImage, relateOrderNo, sheetSn, syncRangList",
+      "后端自动补充：operatorId/operatorName/businessNo；若有 pledge，还会自动补 pledgeOperatorId/pledgeOperatorName"
     ],
     operationBindings: [
       "StockEnumController_shopComboBox",
-      "InventoryStockController_detail",
+      "InventoryStockController_findOne",
+      "InventoryStockController_argumentList",
       "InventoryTagController_list",
-      "InventoryTagController_create",
       "BrandController_group",
       "SeriesController_list",
       "SkuController_listV2",
-      "InventoryWarehouseController_reservoirList",
+      "InventoryWarehouseReservoirController_list",
       "InventoryStockController_update"
     ],
     payloadBuilders: ["buildUpdateStockPayload"],
@@ -399,6 +415,15 @@ const SCENARIO_RECIPES = [
       "在库商品开单和锁单转开单都不是纯用户填写，必须先用详情接口预填商品与成本/锁单信息。",
       "编辑订单不是 create，而是先拉 offline detail 回填，再走 update。",
       "不在库开单时 goodsInfo.imageList、goodsInfo.name、goodsInfo.goodsSource、goodsInfo.categoryId 来自用户输入，不再依赖库存详情。",
+      "actualPrice、type、saleUserIds、saleUserName 必填。",
+      "source 只能是 goods 或 lockOrder。",
+      "goodsInfo 必须是对象；create 时必须提交，update 时不再提交 goodsInfo。",
+      "goodsInfo.inStock 必填；inStock=1 时 goodsInfo.stockNo 必填，inStock=0 时 goodsInfo.name 和 goodsInfo.goodsSource 和 goodsInfo.categoryId 必填。",
+      "goodsInfo 可额外携带 listImage 作为商品封面；goodsInfo.imageList 仍然必须是字符串数组。",
+      "source=lockOrder 时必须传 lockNo。",
+      "paidInfo.paidVoucher、settleInfo.settleVoucher、goodsInfo.imageList 都必须是字符串数组，不能传对象数组。",
+      "paidInfo.paidMethod 的服务层可用值只有 alipay、wechat、bankcard、cash、other。",
+      "paidInfo.paidStatus 在 BFF 层默认 0；settleInfo.settleStatus 在 BFF 层默认 2。agent 应优先按当前 BFF 语义组装，不直接套用下游 Java 原始枚举。",
       "任何 paidVoucher、settleVoucher、goodsInfo.imageList 外部 URL 都必须先上传替换。",
       "新增订单类型和售后保障时，必须先通过店铺设置接口新增枚举值，再刷新 combobox。"
     ],
@@ -473,7 +498,7 @@ const SCENARIO_RECIPES = [
         field: "new orderType / aftersale value",
         source: "shop setting values add",
         api: { method: "POST", path: "/stock/shop/setting/values/add" },
-        note: "新增订单类型或售后保障后，需要重新刷新 shop combo box。"
+        note: "新增订单类型或售后保障后，需要重新刷新 shop combo box。服务层实际需要 enterpriseNo + settingCode + value{name, categoryId?, isEnable?}；带分类约束的配置值要补 categoryId。"
       },
       {
         field: "goodsInfo.brandId + goodsInfo.brandName",
@@ -502,23 +527,24 @@ const SCENARIO_RECIPES = [
       { field: "goodsInfo for in-stock create", from: "inventory stock detail + query stockNo", via: ["GET /stock/inventory/stock/detail"], to: "body.goodsInfo" },
       { field: "goodsInfo for lock-order create", from: "lock order detail + query stockNo", via: ["GET /stock/order/lock/detail"], to: "body.goodsInfo" },
       { field: "goodsInfo for edit", from: "offline detail baseline", via: ["GET /stock/order/offline/detail"], to: "edit baseline only; update payload itself不再带goodsInfo" },
-      { field: "goodsInfo for out-of-stock create", from: "user input + brand selector + uploaded images", via: ["GET /stock/enum/shop/combo-box", "GET /product/brand/group", "upload_external_file"], to: "body.goodsInfo" },
+      { field: "goodsInfo for out-of-stock create", from: "user input + brand selector + uploaded images", via: ["GET /stock/enum/shop/combo-box", "GET /product/brand/group", "upload_external_file"], to: "body.goodsInfo including optional listImage" },
       { field: "lockNo", from: "query.orderNo when source=lockOrder and not edit", via: ["GET /stock/order/lock/detail"], to: "body.lockNo" }
     ],
     finalPayloadShape: [
-      "create: deposit?, actualPrice, costList?, originalCost, type, typeDesc, saleUserIds, saleUserName, saleTime, aftersale, aftersaleDesc, paidInfo, settleInfo, remark, customerName/customerPhone/customerAddress, goodsInfo, source, lockNo?",
+      "create: deposit?, actualPrice, costList?, originalCost, type, typeDesc, saleUserIds, saleUserName, saleTime, aftersale, aftersaleDesc, paidInfo, settleInfo, remark, customerName/customerPhone/customerAddress, goodsInfo, source, lockNo?, channel?, deliveryType?, outSn?, waybillNo?",
       "update: actualPrice, costList?, originalCost, type, typeDesc, saleUserIds, saleUserName, saleTime, aftersale, aftersaleDesc, paidInfo, settleInfo, remark, customerName/customerPhone/customerAddress, wmsOrderNo",
       "goodsInfo(inStock=1): inStock=1, stockNo, brandId(optional from form baseline/query), goodsSource/from detail baseline",
-      "goodsInfo(inStock=0): inStock=0, name, goodsSource, categoryId, brandId, imageList"
+      "goodsInfo(inStock=0): inStock=0, name, goodsSource, categoryId, brandId, imageList, listImage?",
+      "后端自动补充：create 时注入 inStock=goodsInfo.inStock、operatorId/operatorName/businessNo；update 时注入 operatorId/operatorName"
     ],
     operationBindings: [
       "StockEnumController_comboBox",
       "StockEnumController_shopComboBox",
       "StockBusinessController_commonList",
-      "InventoryStockController_detail",
+      "InventoryStockController_findOne",
       "StockOrderLockController_detail",
       "StockOrderOfflineController_detail",
-      "StockShopController_settingValuesAdd",
+      "BrandController_group",
       "StockOrderOfflineController_create",
       "StockOrderOfflineController_update"
     ],
@@ -547,6 +573,8 @@ const SCENARIO_RECIPES = [
     requiredUserInputs: ["stockNo"],
     validationRules: [
       "查看详情必须先拿到 stockNo。",
+      "如果希望详情同时返回 categorySpecificList，query 里还要传 categoryId；不传时不会额外补分类参数池。",
+      "普通详情接口会校验库存归属商户；enterpriseNo 与库存 businessNo 不一致时会返回 403。",
       "若普通 detail 返回 subCode=403，则改走 share detail 只读链路。",
       "后续动作不能靠 skill 静态假设，必须以 buttonList.status=show 和 routeInfo 的可用性为准。",
       "状态栏提示依赖 status、lockInfo、pledge、buttonTips 联合判断。"
@@ -664,8 +692,8 @@ const SCENARIO_RECIPES = [
       { code: "softDelete/hardDelete/restore/restoreLoss/loss/redeem/createAuction", routeDependency: "depends on buttonList visibility and per-action params", requiredContext: ["stockNo or goodsNo/smuId as returned in detail"] }
     ],
     operationBindings: [
-      "InventoryStockController_detail",
-      "InventoryStockController_detailShare"
+      "InventoryStockController_findOne",
+      "InventoryStockController_shareDetail"
     ],
     payloadBuilders: ["buildStockDetailPayload"],
     fileFieldRules: [],
