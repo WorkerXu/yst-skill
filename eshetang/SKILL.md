@@ -58,8 +58,6 @@ description_en: "Eshetang login, local API doc cache, stock/order orchestration"
 - “新增商品” 优先理解为 “创建库存”
 - “修改商品” 优先理解为 “修改库存”
 
-不要优先走 `product-json` 下的 `商品管理`、`商品管理 v3`、`商品管理 v4`、`管货商品管理` 接口；这些接口在远端 MCP 中已隐藏。优先走 `stock` 相关接口，尤其是 `库存模块`。
-
 ## 文档同步策略
 
 在执行任何业务编排前，都先做一次文档同步检查：
@@ -99,53 +97,268 @@ description_en: "Eshetang login, local API doc cache, stock/order orchestration"
 
 ## 高频 recipe
 
-### 1. 新增商品 / 新增库存
+这些 recipe 不是“记住一个最终写接口”这么简单，而是把页面操作里的整段数据流还原出来：
+- 先调哪些枚举和选择器接口
+- 哪些 ID 来自前置接口，而不是用户自然语言
+- 哪些字段是详情回填
+- 哪些字段变化后必须重跑上游接口
+- 最终 payload 如何拼出来
+
+### 1. `inventory_add_goods`
 
 固定顺序：
-- 品牌下拉
-- 分类下拉
-- 系列下拉
-- 仓库列表
-- 文件预处理
-- 新建库存
+- 读取店铺枚举
+- 按分类加载分类特有参数
+- 可选图片识款
+- 读取标签列表
+- 按分类选择品牌
+- 按品牌选择系列
+- 按分类/品牌/系列选择型号
+- 选择仓库和库位
+- 可选智能填充基础信息
+- 预处理并上传所有媒体
+- 创建库存
 
 核心接口：
-- `BrandController_comboBox`
-- `CategoryController_stockCategoryList`
-- `SeriesController_comboBox`
-- `InventoryWarehouseController_list`
+- `StockEnumController_shopComboBox`
+- `InventoryStockController_argumentList`
+- `InventoryTagController_list`
+- `InventoryTagController_create`
+- `SkuController_imageRecognizeSpuSku`
+- `BrandController_group`
+- `SeriesController_list`
+- `SkuController_listV2`
+- `InventoryWarehouseController_reservoirList`
+- `PostController_analysisContent`
 - `InventoryStockController_create`
 
-### 2. 商品卖出 / 开单
+关键字段来源必须完整还原：
+- `categoryId`
+  来自店铺枚举 `GET /stock/enum/shop/combo-box`
+- `argumentList`
+  来自 `GET /stock/inventory/stock/argument/list?categoryId=...`
+- `brandId`
+  来自 `GET /product/brand/group?categoryId=...`
+- `seriesId`
+  来自 `GET /product/series?categoryId=...&brandId=...`
+- `skuId` / `skuName` / `officialPrice`
+  来自 `GET /product/sku/v2`
+- `warehouseId` / `reservoirId`
+  来自 `GET /stock/inventory/warehouse-reservoir/list`
+- `finenessValueId` / `priceList` / `recycle` / `annex`
+  来自店铺枚举 `GET /stock/enum/shop/combo-box`
+- `tagList`
+  来自 `GET /stock/inventory/tag/list`，若页面新建标签则先 `POST /stock/inventory/tag/create`
+- `imageList` / `detailsImageList` / `costList[].imageList` / `recycle.imageList` / `annex.imageList`
+  先走上传，再写回最终 payload
+
+提交体组装必须覆盖：
+- 基础字段：`categoryId`、`imageList`、`detailsImageList`、`description`、`finenessValueId`
+- SKU 字段：`brandId`、`seriesId`、`skuId`、`skuName`、`officialPrice`
+- 分类参数：`argumentList`
+- 成本和售价：`originalCost`、`costList`、`priceList`
+- 库存位置：`warehouseId`、`reservoirId`
+- 扩展字段：`remarkList`、`tagList`、`annex`、`recycle`、`count`、`identifier`、`seriesNumber`、`syncRangList`
+- 条件字段：`pledge`、`goodsContact`
+
+关键校验：
+- `imageList` 至少 1 张
+- `finenessValueId` 必填
+- `description` 必填
+- `goodsSource` 必填
+- `goodsSource=PLEDGE` 时必须有 `pledge.pledgeExpireTime`
+- 同步同行圈时，`priceList` 中同行价字段必填
+
+### 2. `inventory_edit_goods`
 
 固定顺序：
-- 员工枚举
-- 店铺订单类型枚举
-- 文件预处理
-- 订单创建
+- 读取店铺枚举
+- 读取库存详情并回填
+- 如果用户修改分类，重新加载分类特有参数
+- 如果用户修改标签，重新读取标签列表或先创建新标签
+- 如果用户修改品牌/系列/型号，重新走对应选择接口
+- 如果用户修改仓库位置，重新走仓库-库位选择接口
+- 预处理并上传所有媒体
+- 更新库存
 
 核心接口：
-- `BusinessController_comboBox`
 - `StockEnumController_shopComboBox`
-- `StockOrderOfflineController_create`
+- `InventoryStockController_detail`
+- `InventoryStockController_argumentList`
+- `BrandController_group`
+- `SeriesController_list`
+- `SkuController_listV2`
+- `InventoryTagController_list`
+- `InventoryTagController_create`
+- `InventoryWarehouseController_reservoirList`
+- `InventoryStockController_update`
 
-### 3. 查询库存订单详情
+编辑场景的核心规则：
+- 先 `GET /stock/inventory/stock/detail`，把详情作为初始表单状态
+- 用户没改的字段沿用详情值
+- 用户一旦改了 `categoryId`，必须重跑：
+  - `GET /stock/inventory/stock/argument/list`
+  - `GET /product/brand/group`
+  - `GET /product/series`
+  - `GET /product/sku/v2`
+- 用户改了 `brandId`，必须重跑：
+  - `GET /product/series`
+  - `GET /product/sku/v2`
+- 用户改了 `seriesId`，必须重跑：
+  - `GET /product/sku/v2`
+- 用户改了仓库位置，必须重跑：
+  - `GET /stock/inventory/warehouse-reservoir/list`
+- 所有新增外部文件地址仍然必须先上传再提交
+
+### 3. `inventory_view_goods`
 
 固定顺序：
-- 订单列表
-- 订单详情
+- 读取库存详情
+- 拆分可见按钮
+- 解析 `buttonList`
+- 解析 `routeInfo`
+- 推导后续可执行动作
 
 核心接口：
-- `StockOrderOfflineController_list`
-- `StockOrderOfflineController_detail`
+- `InventoryStockController_detail`
+- `InventoryStockController_detailShare`
 
-### 4. 任意带文件参数的写接口
+注意：
+- 如果普通详情返回 `subCode=403`，说明当前只能走分享态，改用 `GET /stock/inventory/stock/detail/share`
+- 后续可执行动作不是静态假定，而是由库存详情返回的 `buttonList` 和 `routeInfo` 决定
+- 详情里需要重点读取：
+  - `subCode`
+  - `status`
+  - `buttonList`
+  - `routeInfo`
+  - `lockInfo`
+  - `onlineStatus`
+  - `goodsSource`
+  - `skuInfo`
+  - `argumentList`
+  - `positionInfo`
+  - `imageList`
+  - `detailsImageList`
+  - `priceList`
+  - `costList`
+  - `annex`
+  - `recycle`
+  - `buttonTips`
+  - `logList`
+  - `stockSyncConfigList`
+  - `syncProduct`
+  - `shopInfo`
+  - `goodsNo`
+  - `warehouseId`
+  - `reservoirId`
+  - `noPaiPaiPermissionUrl`
+  - `relateOrderNo`
+  - `sheetSn`
+
+详情字段如何驱动后续动作：
+- `buttonList`
+  只处理 `status=show` 的按钮；这决定某个动作当前是否真的可执行
+- `buttonList.code + level`
+  页面会把按钮拆成左右两组：
+  - `code=relocation` 或 `level in [primary, secondary]` 进入主操作区
+  - 其余可见按钮进入次操作区
+- `routeInfo.inStock.redirectType.params.skipUrl`
+  驱动 `createOrder`
+- `routeInfo.lock.redirectType.params.skipUrl`
+  驱动普通锁单
+- `routeInfo.deliveryLock.redirectType.params.skipUrl`
+  驱动“需要发货”的锁单链路
+- `routeInfo.log.redirectType.params.skipUrl`
+  驱动“查看变更日志”
+- `lockInfo.lockOrderNo`
+  驱动 `unlock`
+- `warehouseId / reservoirId / positionInfo`
+  驱动 `relocation`
+- `stockNo`
+  驱动 `edit`、`copyInWarehouse`、`print`、`online`、`offline`、删除/恢复/盘亏等库存动作
+- `goodsNo / smuId`
+  驱动部分拍卖或跨语义动作
+- `syncProduct.list`
+  驱动同步平台开关与后续同步动作
+- `noPaiPaiPermissionUrl`
+  会拦截部分同步平台动作，要求先跳转处理权限
+
+顶部状态提示也来自详情，不要自己猜：
+- `status=2` 且 `lockInfo.operatorName + lockInfo.dtCreated` 存在时，展示锁单/开单提示
+- `pledge.pledgeExpireTime` 存在时，展示质押到期提示
+- `buttonTips` 存在时，展示按钮上方提示文案
+
+### 4. `offline_order_create`
 
 固定顺序：
-- 从本地文档解析接口
-- 扫描 payload 文件字段
-- 对外部 URL 逐个上传并回填
-- 再执行最终接口
+- 读取通用枚举
+- 读取店铺枚举
+- 读取员工列表
+- 按 query 分支加载预填详情
+- 如需新增订单类型/售后保障，先新增店铺配置值
+- 预处理商品图、收款凭证、结款凭证
+- 创建或更新订单
+
+核心接口：
+- `StockEnumController_comboBox`
+- `StockEnumController_shopComboBox`
+- `StockBusinessController_commonList`
+- `InventoryStockController_detail`
+- `StockOrderLockController_detail`
+- `StockOrderOfflineController_detail`
+- `StockShopController_settingValuesAdd`
+- `StockOrderOfflineController_create`
+- `StockOrderOfflineController_update`
+
+必须先理解 4 个真实分支：
+- `source=goods && inStock=1 && mode!=edit`
+  在库商品开单
+  先 `GET /stock/inventory/stock/detail`
+- `source=lockOrder`
+  锁单转开单
+  先 `GET /stock/order/lock/detail`
+- `source=goods && mode=edit`
+  编辑已有订单
+  先 `GET /stock/order/offline/detail`
+- `source=goods && inStock=0 && mode!=edit`
+  不在库商品开单
+  没有商品详情预填，商品信息来自用户输入
+
+字段来源必须完整还原：
+- `type` / `typeDesc`
+  来自 `GET /stock/enum/shop/combo-box`
+- `aftersale` / `aftersaleDesc`
+  来自 `GET /stock/enum/shop/combo-box`
+- `saleUserIds` / `saleUserName`
+  来自 `GET /stock/business/common/list`
+- `paidInfo.paidStatus` / `paidInfo.paidMethod`
+  来自 `GET /stock/enum/combo-box`
+- `settleInfo.settleStatus`
+  来自 `GET /stock/enum/combo-box`
+- 在库开单的 `goodsInfo`
+  来自 `GET /stock/inventory/stock/detail`
+- 锁单转开单的 `deposit` / `actualPrice` / `customer*` / `saleUserIds`
+  来自 `GET /stock/order/lock/detail`
+- 编辑订单的整表单基线
+  来自 `GET /stock/order/offline/detail`
+- 不在库开单的 `goodsInfo.name` / `goodsInfo.goodsSource` / `goodsInfo.categoryId`
+  来自用户输入
+- 不在库开单的 `goodsInfo.brandId`
+  来自品牌选择接口 `GET /product/brand/group`
+
+提交规则：
+- 创建走 `POST /stock/order/offline/create`
+- 编辑走 `POST /stock/order/offline/update`
+- `source=lockOrder` 且不是编辑时，create payload 必须带 `lockNo`
+- 编辑时 payload 必须带 `wmsOrderNo`
+- 编辑订单时不再提交 `goodsInfo`
+
+文件字段规则：
+- `goodsInfo.imageList[].url`
+- `paidInfo.paidVoucher[]`
+- `settleInfo.settleVoucher[]`
+
+这些外部地址都必须先上传，再写回 payload。
 
 ## 必填参数规则
 
@@ -185,6 +398,7 @@ description_en: "Eshetang login, local API doc cache, stock/order orchestration"
 - 如果做不到，明确告诉用户当前缺什么
 - 不再默认先走远端搜索接口
 - 优先走本地 recipe / 本地文档
+- 如果某个场景在源码中无法完整还原出接口数据流，就不要把它固化成 recipe
 - 真正调用前，必须确保文件字段已经完成上传替换
 
 ## 常用命令

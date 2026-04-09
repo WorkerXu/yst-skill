@@ -54,78 +54,628 @@ const FILE_PATH_PURPOSE_RULES = [
   { pattern: /^annex\.imageList\[\d+\]\.fileUrl$/, purpose: "stock" },
   { pattern: /^costList\[\d+\]\.imageList\[\d+\]\.fileUrl$/, purpose: "stock" },
   { pattern: /^recycle\.imageList\[\d+\]\.fileUrl$/, purpose: "recovery" },
+  { pattern: /^goodsInfo\.imageList\[\d+\]\.url$/, purpose: "stock" },
   { pattern: /^paidInfo\.paidVoucher\[\d+\]$/, purpose: "receipt" },
   { pattern: /^settleInfo\.settleVoucher\[\d+\]$/, purpose: "receipt" }
 ];
 const SCENARIO_RECIPES = [
   {
-    scenarioKey: "create_stock",
-    intentPatterns: ["新增商品", "添加商品", "新增库存", "创建库存"],
+    scenarioKey: "inventory_add_goods",
+    semanticGroup: "inventory_goods",
+    sourceOfTruth: "luxury_flutter.inventory_api_flow",
+    intentPatterns: ["新增商品", "添加商品", "新增库存", "创建库存", "入库商品"],
     steps: [
-      "lookup_brand",
-      "lookup_category",
-      "lookup_series",
-      "lookup_warehouse",
+      "load_shop_combo_box",
+      "load_category_argument_list",
+      "optional_image_recognize_sku",
+      "load_inventory_tag_list",
+      "load_brand_group",
+      "load_series_list",
+      "load_sku_list",
+      "load_warehouse_reservoir_list",
+      "optional_analysis_content",
       "preprocess_files",
-      "invoke_create_stock"
+      "invoke_stock_create"
     ],
-    requiredUserInputs: ["categoryId", "goodsSource", "onlineStatus", "status", "description"],
+    requiredUserInputs: [
+      "categoryId",
+      "brandId",
+      "finenessValueId",
+      "description",
+      "goodsSource",
+      "onlineStatus"
+    ],
+    validationRules: [
+      "categoryId 必选，否则不能确定 brand/series/sku 和分类特有参数。",
+      "imageList 至少 1 张，否则页面直接阻止提交。",
+      "finenessValueId 必选。",
+      "description 必填。",
+      "goodsSource 必选；当 goodsSource=PLEDGE 时必须提供 pledge.pledgeExpireTime。",
+      "当 syncRangList 包含 PEER_CIRCLE 时，priceList 中 settingValueId=1973 的同行价必填且不能以 0 开头。"
+    ],
+    conditionalRequiredUserInputs: [
+      {
+        when: "goodsSource == PLEDGE",
+        fields: ["pledge.pledgeExpireTime"]
+      },
+      {
+        when: "syncRangList includes PEER_CIRCLE",
+        fields: ["priceList[settingValueId=1973]"]
+      }
+    ],
+    fieldSources: [
+      {
+        field: "categoryId",
+        source: "shop combo box category tree",
+        api: { method: "GET", path: "/stock/enum/shop/combo-box" },
+        note: "先从店铺枚举中选择分类，分类变化后会影响后续品牌/系列/型号和分类特有参数。"
+      },
+      {
+        field: "categorySpecificList -> argumentList",
+        source: "category argument list",
+        api: { method: "GET", path: "/stock/inventory/stock/argument/list" },
+        note: "按 categoryId 拉分类特有参数，再映射进最终 argumentList。"
+      },
+      {
+        field: "brandId",
+        source: "brand selector",
+        api: { method: "GET", path: "/product/brand/group" },
+        note: "先有 categoryId，才能选择品牌；品牌 id 不能凭名称猜测。"
+      },
+      {
+        field: "seriesId",
+        source: "series selector",
+        api: { method: "GET", path: "/product/series" },
+        note: "先有 categoryId + brandId，才能选择系列。"
+      },
+      {
+        field: "skuId + skuName + officialPrice",
+        source: "sku selector",
+        api: { method: "GET", path: "/product/sku/v2" },
+        note: "型号选择会同时回填或确认 categoryId、brandId、seriesId、skuId、skuName、公价。"
+      },
+      {
+        field: "finenessValueId",
+        source: "shop combo box fineness list",
+        api: { method: "GET", path: "/stock/enum/shop/combo-box" }
+      },
+      {
+        field: "warehouseId + reservoirId",
+        source: "warehouse-reservoir selector",
+        api: { method: "GET", path: "/stock/inventory/warehouse-reservoir/list" },
+        note: "仓库和库位通过树形选择得到；未分配位置时 reservoirId=0。"
+      },
+      {
+        field: "recycle.settingValueId / annex / priceList",
+        source: "shop combo box",
+        api: { method: "GET", path: "/stock/enum/shop/combo-box" }
+      },
+      {
+        field: "tagList",
+        source: "inventory tag selector",
+        api: { method: "GET", path: "/stock/inventory/tag/list" },
+        note: "标签是可选字段，但如果页面选择了标签，最终提交必须传 tagId/tagName。页面也支持缺失时先创建新标签。"
+      },
+      {
+        field: "new tag creation",
+        source: "inventory tag create",
+        api: { method: "POST", path: "/stock/inventory/tag/create" },
+        note: "当用户输入的新标签在现有列表中不存在时，先创建标签，再把返回结果回填进 tagList。"
+      },
+      {
+        field: "categoryId + brandId + seriesId + skuId optional autofill",
+        source: "image recognize sku",
+        api: { method: "GET", path: "/product/image/recognize/spuSku" },
+        note: "图片识款是可选辅助流，会根据图片识别出分类/品牌/系列/型号，仍需用户确认。"
+      },
+      {
+        field: "brandId + seriesId + skuId optional autofill",
+        source: "analysis content",
+        api: { method: "GET", path: "/post/analysis/content" },
+        note: "只作为辅助自动填充，不能替代必填确认。"
+      }
+    ],
+    interfaceSequence: [
+      { method: "GET", path: "/stock/enum/shop/combo-box", purpose: "加载分类、成色、价格类型、回收类型、附件等枚举" },
+      { method: "GET", path: "/stock/inventory/stock/argument/list", purpose: "按分类拉取分类特有参数" },
+      { method: "GET", path: "/stock/inventory/tag/list", purpose: "加载可选标签" },
+      { method: "POST", path: "/stock/inventory/tag/create", purpose: "当页面新增标签时先创建标签再回填" },
+      { method: "GET", path: "/product/image/recognize/spuSku", purpose: "可选图片识款，辅助回填分类/品牌/系列/型号" },
+      { method: "GET", path: "/product/brand/group", purpose: "按分类选择品牌" },
+      { method: "GET", path: "/product/series", purpose: "按品牌选择系列" },
+      { method: "GET", path: "/product/sku/v2", purpose: "按分类/品牌/系列选择型号并回填 sku 相关字段" },
+      { method: "GET", path: "/stock/inventory/warehouse-reservoir/list", purpose: "选择仓库与库位" },
+      { method: "GET", path: "/post/analysis/content", purpose: "可选智能填充基础信息" },
+      { method: "POST", path: "/stock/inventory/stock/create", purpose: "提交库存创建" }
+    ],
+    payloadFieldFlow: [
+      { field: "categoryId", from: "user selection", via: ["GET /stock/enum/shop/combo-box"], to: "body.categoryId" },
+      { field: "argumentList", from: "category-specific params", via: ["GET /stock/inventory/stock/argument/list"], to: "body.argumentList" },
+      { field: "brandId", from: "brand selector or sku/image/content autofill", via: ["GET /product/brand/group", "GET /product/image/recognize/spuSku", "GET /post/analysis/content"], to: "body.brandId" },
+      { field: "seriesId", from: "series selector or sku/image/content autofill", via: ["GET /product/series", "GET /product/image/recognize/spuSku", "GET /post/analysis/content"], to: "body.seriesId" },
+      { field: "skuId + skuName + officialPrice", from: "sku selector or image/content autofill", via: ["GET /product/sku/v2", "GET /product/image/recognize/spuSku", "GET /post/analysis/content"], to: ["body.skuId", "body.skuName", "body.officialPrice"] },
+      { field: "finenessValueId", from: "shop combo box fineness", via: ["GET /stock/enum/shop/combo-box"], to: "body.finenessValueId" },
+      { field: "priceList", from: "shop combo box price types + user input", via: ["GET /stock/enum/shop/combo-box"], to: "body.priceList" },
+      { field: "recycle", from: "shop combo box recycle types + user input", via: ["GET /stock/enum/shop/combo-box"], to: "body.recycle" },
+      { field: "annex", from: "shop combo box attachment values + user input", via: ["GET /stock/enum/shop/combo-box"], to: "body.annex" },
+      { field: "warehouseId + reservoirId", from: "warehouse selector", via: ["GET /stock/inventory/warehouse-reservoir/list"], to: ["body.warehouseId", "body.reservoirId"] },
+      { field: "tagList", from: "tag selector or tag create", via: ["GET /stock/inventory/tag/list", "POST /stock/inventory/tag/create"], to: "body.tagList" },
+      { field: "imageList/detailsImageList/costList/recycle.imageList/annex.imageList", from: "user local or external files", via: ["upload_external_file or native upload image/file"], to: "all file URL fields in final body" }
+    ],
+    finalPayloadShape: [
+      "基础必传：categoryId, imageList, detailsImageList, description, finenessValueId, brandId, seriesId, skuId, skuName, officialPrice, goodsSource, onlineStatus, status=1",
+      "分类参数：argumentList",
+      "价格/成本：originalCost, costList, priceList",
+      "库存位置：warehouseId, reservoirId",
+      "扩展信息：remarkList, tagList, annex, recycle, count, identifier, seriesNumber, syncRangList",
+      "条件字段：pledge, goodsContact"
+    ],
     operationBindings: [
-      "BrandController_comboBox",
-      "CategoryController_stockCategoryList",
-      "SeriesController_comboBox",
-      "InventoryWarehouseController_list",
+      "StockEnumController_shopComboBox",
+      "InventoryStockController_argumentList",
+      "InventoryTagController_list",
+      "InventoryTagController_create",
+      "BrandController_group",
+      "SeriesController_list",
+      "SkuController_listV2",
+      "InventoryWarehouseController_reservoirList",
+      "SkuController_imageRecognizeSpuSku",
+      "PostController_analysisContent",
       "InventoryStockController_create"
     ],
     payloadBuilders: ["buildCreateStockPayload"],
-    fileFieldRules: ["stock_media"]
+    fileFieldRules: ["stock_media", "stock_detail_media", "stock_cost_media", "stock_recycle_media", "stock_annex_media"],
+    flowNotes: [
+      "先读取店铺枚举，再按分类动态加载分类特有参数。",
+      "categoryId、brandId、seriesId、skuId、warehouseId、reservoirId、finenessValueId 都有明确的前置接口来源，不能跳过。",
+      "创建库存不是只调一次 create；页面真实流程包含分类枚举、标签、品牌、系列、型号、仓库库位、分类特有参数和媒体上传这些前置数据流。",
+      "提交前必须先上传图片、视频、细节图、成本图、回收图、保卡图，再组装最终库存 payload。",
+      "最终写接口为 POST /stock/inventory/stock/create。"
+    ]
   },
   {
-    scenarioKey: "create_order",
-    intentPatterns: ["卖出", "开单", "创建订单", "客户订单", "销售订单"],
+    scenarioKey: "inventory_edit_goods",
+    semanticGroup: "inventory_goods",
+    sourceOfTruth: "luxury_flutter.inventory_api_flow",
+    intentPatterns: ["修改商品", "编辑商品", "修改库存", "编辑库存"],
     steps: [
-      "lookup_sale_user",
-      "lookup_order_type",
+      "load_shop_combo_box",
+      "load_stock_detail",
+      "load_category_argument_list",
+      "load_inventory_tag_list",
+      "conditional_reselect_brand",
+      "conditional_reselect_series",
+      "conditional_reselect_sku",
+      "conditional_reselect_warehouse_reservoir",
       "preprocess_files",
-      "invoke_create_order"
+      "invoke_stock_update"
     ],
-    requiredUserInputs: ["type", "saleUserIds", "saleUserName", "goodsInfo", "source"],
+    requiredUserInputs: ["stockNo"],
+    autoFilledFields: [
+      "categoryId",
+      "brandId",
+      "seriesId",
+      "skuId",
+      "skuName",
+      "officialPrice",
+      "finenessValueId",
+      "warehouseId",
+      "reservoirId",
+      "tagList",
+      "annex",
+      "recycle",
+      "priceList",
+      "costList"
+    ],
+    validationRules: [
+      "编辑流程先用 detail 回填，再在变更字段上重跑依赖接口，不能直接沿用旧 ID 猜测。",
+      "如果 categoryId 改变，必须重新获取 argumentList，并重新确认 brandId/seriesId/skuId。",
+      "如果 brandId 改变，必须重新获取 series 列表和 sku 列表。",
+      "如果 seriesId 改变，必须重新获取 sku 列表。",
+      "提交前所有新外部文件地址都必须先上传并替换。"
+    ],
+    fieldSources: [
+      {
+        field: "stockNo",
+        source: "user input or upstream context"
+      },
+      {
+        field: "editable fields baseline",
+        source: "stock detail",
+        api: { method: "GET", path: "/stock/inventory/stock/detail" },
+        note: "编辑场景先用详情回填所有已有字段，再在用户修改后重新提交。"
+      },
+      {
+        field: "categorySpecificList -> argumentList",
+        source: "category argument list",
+        api: { method: "GET", path: "/stock/inventory/stock/argument/list" }
+      },
+      {
+        field: "tagList optional reselection",
+        source: "inventory tag selector",
+        api: { method: "GET", path: "/stock/inventory/tag/list" }
+      },
+      {
+        field: "warehouseId + reservoirId optional reselection",
+        source: "warehouse-reservoir selector",
+        api: { method: "GET", path: "/stock/inventory/warehouse-reservoir/list" }
+      }
+    ],
+    interfaceSequence: [
+      { method: "GET", path: "/stock/enum/shop/combo-box", purpose: "加载编辑页枚举" },
+      { method: "GET", path: "/stock/inventory/stock/detail", purpose: "按 stockNo 拉详情并回填" },
+      { method: "GET", path: "/stock/inventory/stock/argument/list", purpose: "按详情中的 categoryId 拉分类特有参数" },
+      { method: "GET", path: "/stock/inventory/tag/list", purpose: "如用户修改标签则先读取标签列表" },
+      { method: "POST", path: "/stock/inventory/tag/create", purpose: "如用户新增标签则先创建" },
+      { method: "GET", path: "/product/brand/group", purpose: "如用户修改品牌则重新选择品牌" },
+      { method: "GET", path: "/product/series", purpose: "如用户修改系列则重新选择系列" },
+      { method: "GET", path: "/product/sku/v2", purpose: "如用户修改型号则重新选择型号并回填 sku 字段" },
+      { method: "GET", path: "/stock/inventory/warehouse-reservoir/list", purpose: "如用户修改仓储位置则重新选择" },
+      { method: "POST", path: "/stock/inventory/stock/update", purpose: "提交库存更新" }
+    ],
+    payloadFieldFlow: [
+      { field: "all editable baseline fields", from: "stock detail", via: ["GET /stock/inventory/stock/detail"], to: "initial form state" },
+      { field: "argumentList", from: "reloaded category-specific params when category changes", via: ["GET /stock/inventory/stock/argument/list"], to: "body.argumentList" },
+      { field: "brandId/seriesId/skuId/skuName/officialPrice", from: "user reselection when upstream ids change", via: ["GET /product/brand/group", "GET /product/series", "GET /product/sku/v2"], to: ["body.brandId", "body.seriesId", "body.skuId", "body.skuName", "body.officialPrice"] },
+      { field: "warehouseId/reservoirId", from: "warehouse reselection", via: ["GET /stock/inventory/warehouse-reservoir/list"], to: ["body.warehouseId", "body.reservoirId"] },
+      { field: "tagList", from: "tag selector or create", via: ["GET /stock/inventory/tag/list", "POST /stock/inventory/tag/create"], to: "body.tagList" },
+      { field: "media fields", from: "existing detail urls + new uploads", via: ["GET /stock/inventory/stock/detail", "upload_external_file or native upload image/file"], to: "all file URL fields in final body" }
+    ],
+    finalPayloadShape: [
+      "update payload 与 create 基本同构，但以 detail 返回值为基线增量修改",
+      "必须携带 stockNo 指向被编辑库存",
+      "用户未修改的字段沿用 detail 回填值，用户修改过的字段按最新选择器结果覆盖"
+    ],
     operationBindings: [
-      "BusinessController_comboBox",
       "StockEnumController_shopComboBox",
-      "StockOrderOfflineController_create"
+      "InventoryStockController_detail",
+      "InventoryTagController_list",
+      "InventoryTagController_create",
+      "BrandController_group",
+      "SeriesController_list",
+      "SkuController_listV2",
+      "InventoryWarehouseController_reservoirList",
+      "InventoryStockController_update"
     ],
-    payloadBuilders: ["buildCreateOrderPayload"],
-    fileFieldRules: ["receipt_media"]
+    payloadBuilders: ["buildUpdateStockPayload"],
+    fileFieldRules: ["stock_media", "stock_detail_media", "stock_cost_media", "stock_recycle_media", "stock_annex_media"],
+    flowNotes: [
+      "编辑链先拉库存详情回填，再沿用新增库存的媒体上传与提交结构。",
+      "如果用户修改分类、品牌、系列、型号或仓库位置，必须重新走对应的字段来源接口，不能直接猜测 ID。",
+      "如果用户只修改描述、价格、标签、附件或媒体，则无需重跑 brand/series/sku 链，但仍要保持最终 payload 结构完整。",
+      "最终写接口为 POST /stock/inventory/stock/update。"
+    ]
   },
   {
-    scenarioKey: "query_order_detail",
-    intentPatterns: ["查询订单详情", "订单详情", "库存订单详情"],
+    scenarioKey: "offline_order_create",
+    semanticGroup: "offline_order",
+    sourceOfTruth: "saas_mini.stock_order_offline_create_flow",
+    intentPatterns: ["卖出开单", "开单", "创建订单", "在库商品开单", "不在库商品开单", "锁单开单", "编辑订单"],
     steps: [
-      "lookup_order_list",
-      "invoke_order_detail"
+      "load_stock_enum_combo_box",
+      "load_shop_combo_box",
+      "load_staff_options",
+      "branch_prefill_source",
+      "optional_add_shop_setting_value",
+      "preprocess_files",
+      "invoke_order_create_or_update"
     ],
-    requiredUserInputs: ["wmsOrderNo"],
+    requiredUserInputs: [
+      "source",
+      "inStock",
+      "type",
+      "saleUserIds",
+      "actualPrice"
+    ],
+    conditionalRequiredUserInputs: [
+      {
+        when: "source == goods && inStock == 1 && mode != edit",
+        fields: ["stockNo"]
+      },
+      {
+        when: "source == lockOrder",
+        fields: ["orderNo", "stockNo"]
+      },
+      {
+        when: "source == goods && mode == edit",
+        fields: ["orderNo"]
+      },
+      {
+        when: "source == goods && inStock == 0 && mode != edit",
+        fields: ["goodsInfo.imageList", "goodsInfo.name", "goodsInfo.goodsSource", "goodsInfo.categoryId"]
+      },
+      {
+        when: "paidInfo.paidStatus == 1",
+        fields: ["paidInfo.paidMethod"]
+      },
+      {
+        when: "goodsSource == CONSIGN_SALE && settleInfo.settleStatus in [1,2]",
+        fields: ["settleInfo.settleStatus"]
+      }
+    ],
+    validationRules: [
+      "开单页总是先并行拉枚举：stock enum、shop combo box、staff list。",
+      "开单存在 4 个真实分支：在库商品开单、锁单转开单、订单编辑、不在库商品开单。",
+      "在库商品开单和锁单转开单都不是纯用户填写，必须先用详情接口预填商品与成本/锁单信息。",
+      "编辑订单不是 create，而是先拉 offline detail 回填，再走 update。",
+      "不在库开单时 goodsInfo.imageList、goodsInfo.name、goodsInfo.goodsSource、goodsInfo.categoryId 来自用户输入，不再依赖库存详情。",
+      "任何 paidVoucher、settleVoucher、goodsInfo.imageList 外部 URL 都必须先上传替换。",
+      "新增订单类型和售后保障时，必须先通过店铺设置接口新增枚举值，再刷新 combobox。"
+    ],
+    branchFlow: [
+      {
+        branch: "goods + inStock=1 + mode!=edit",
+        purpose: "在库商品开单",
+        queryRequired: ["stockNo", "source=goods", "inStock=1"],
+        preloadApis: ["GET /stock/inventory/stock/detail"],
+        result: "用 stockInfo 预填商品、成本、原始成本。"
+      },
+      {
+        branch: "lockOrder",
+        purpose: "锁单转开单",
+        queryRequired: ["orderNo", "stockNo", "source=lockOrder", "inStock=1"],
+        preloadApis: ["GET /stock/order/lock/detail"],
+        result: "用 lockInfo 预填 presalePrice/deposit/saleUserIds/客户信息/定金凭证，提交 create 时带 lockNo。"
+      },
+      {
+        branch: "goods + mode=edit",
+        purpose: "编辑已有线下订单",
+        queryRequired: ["orderNo", "source=goods", "mode=edit"],
+        preloadApis: ["GET /stock/order/offline/detail"],
+        result: "用 orderInfo 完整回填表单，最终走 update 并携带 wmsOrderNo。"
+      },
+      {
+        branch: "goods + inStock=0 + mode!=edit",
+        purpose: "不在库商品开单",
+        queryRequired: ["source=goods", "inStock=0"],
+        preloadApis: [],
+        result: "商品信息全部来自用户输入，只依赖枚举与品牌选择。"
+      }
+    ],
+    fieldSources: [
+      {
+        field: "orderType + serviceType + shopCategory",
+        source: "shop combo box",
+        api: { method: "GET", path: "/stock/enum/shop/combo-box" },
+        note: "订单类型、售后保障、不在库商品分类都来自店铺枚举。"
+      },
+      {
+        field: "stockGoodsSource + paidStatus + paymentMethodList + settleStatus",
+        source: "stock enum combo box",
+        api: { method: "GET", path: "/stock/enum/combo-box" },
+        note: "商品来源、收款状态、收款方式、结款状态来自通用枚举。"
+      },
+      {
+        field: "saleUserIds + saleUserName options",
+        source: "staff common list",
+        api: { method: "GET", path: "/stock/business/common/list" },
+        note: "销售人员选择来自员工列表，提交时要拼 saleUserIds 和 saleUserName。"
+      },
+      {
+        field: "stockInfo + costList + originalCost",
+        source: "inventory stock detail",
+        api: { method: "GET", path: "/stock/inventory/stock/detail" },
+        note: "在库商品开单用库存详情预填商品、成本与价格展示。"
+      },
+      {
+        field: "lockInfo + deposit + presalePrice + customer info",
+        source: "lock order detail",
+        api: { method: "GET", path: "/stock/order/lock/detail" },
+        note: "锁单转开单时，成交价、定金、客户信息、销售人员、定金凭证都来自锁单详情。"
+      },
+      {
+        field: "orderInfo baseline",
+        source: "offline order detail",
+        api: { method: "GET", path: "/stock/order/offline/detail" },
+        note: "编辑订单时，整个表单以订单详情为基线回填。"
+      },
+      {
+        field: "new orderType / aftersale value",
+        source: "shop setting values add",
+        api: { method: "POST", path: "/stock/shop/setting/values/add" },
+        note: "新增订单类型或售后保障后，需要重新刷新 shop combo box。"
+      },
+      {
+        field: "goodsInfo.brandId + goodsInfo.brandName",
+        source: "brand selector",
+        api: { method: "GET", path: "/product/brand/group" },
+        note: "仅不在库商品开单时需要，由 categoryId 驱动。"
+      }
+    ],
+    interfaceSequence: [
+      { method: "GET", path: "/stock/enum/combo-box", purpose: "加载商品来源、收款状态、收款方式、结款状态" },
+      { method: "GET", path: "/stock/enum/shop/combo-box", purpose: "加载订单类型、售后保障、不在库商品分类" },
+      { method: "GET", path: "/stock/business/common/list", purpose: "加载销售人员选项" },
+      { method: "GET", path: "/stock/inventory/stock/detail", purpose: "在库商品开单时预填库存商品信息" },
+      { method: "GET", path: "/stock/order/lock/detail", purpose: "锁单转开单时预填锁单信息" },
+      { method: "GET", path: "/stock/order/offline/detail", purpose: "编辑订单时回填现有订单" },
+      { method: "POST", path: "/stock/shop/setting/values/add", purpose: "新增订单类型或售后保障枚举值" },
+      { method: "POST", path: "/stock/order/offline/create", purpose: "创建线下订单" },
+      { method: "POST", path: "/stock/order/offline/update", purpose: "更新线下订单" }
+    ],
+    payloadFieldFlow: [
+      { field: "type + typeDesc", from: "shop combo orderType selection", via: ["GET /stock/enum/shop/combo-box"], to: ["body.type", "body.typeDesc"] },
+      { field: "saleUserIds + saleUserName", from: "staff selection", via: ["GET /stock/business/common/list"], to: ["body.saleUserIds", "body.saleUserName"] },
+      { field: "aftersale + aftersaleDesc", from: "shop combo serviceType selection", via: ["GET /stock/enum/shop/combo-box"], to: ["body.aftersale", "body.aftersaleDesc"] },
+      { field: "paidInfo.paidStatus + paidMethod + paidVoucher", from: "stock enum + user input + uploaded vouchers", via: ["GET /stock/enum/combo-box", "upload_external_file"], to: "body.paidInfo" },
+      { field: "settleInfo.settleStatus + settleVoucher + settleRemark", from: "stock enum + user input + uploaded vouchers", via: ["GET /stock/enum/combo-box", "upload_external_file"], to: "body.settleInfo" },
+      { field: "goodsInfo for in-stock create", from: "inventory stock detail + query stockNo", via: ["GET /stock/inventory/stock/detail"], to: "body.goodsInfo" },
+      { field: "goodsInfo for lock-order create", from: "lock order detail + query stockNo", via: ["GET /stock/order/lock/detail"], to: "body.goodsInfo" },
+      { field: "goodsInfo for edit", from: "offline detail baseline", via: ["GET /stock/order/offline/detail"], to: "edit baseline only; update payload itself不再带goodsInfo" },
+      { field: "goodsInfo for out-of-stock create", from: "user input + brand selector + uploaded images", via: ["GET /stock/enum/shop/combo-box", "GET /product/brand/group", "upload_external_file"], to: "body.goodsInfo" },
+      { field: "lockNo", from: "query.orderNo when source=lockOrder and not edit", via: ["GET /stock/order/lock/detail"], to: "body.lockNo" }
+    ],
+    finalPayloadShape: [
+      "create: deposit?, actualPrice, costList?, originalCost, type, typeDesc, saleUserIds, saleUserName, saleTime, aftersale, aftersaleDesc, paidInfo, settleInfo, remark, customerName/customerPhone/customerAddress, goodsInfo, source, lockNo?",
+      "update: actualPrice, costList?, originalCost, type, typeDesc, saleUserIds, saleUserName, saleTime, aftersale, aftersaleDesc, paidInfo, settleInfo, remark, customerName/customerPhone/customerAddress, wmsOrderNo",
+      "goodsInfo(inStock=1): inStock=1, stockNo, brandId(optional from form baseline/query), goodsSource/from detail baseline",
+      "goodsInfo(inStock=0): inStock=0, name, goodsSource, categoryId, brandId, imageList"
+    ],
     operationBindings: [
-      "StockOrderOfflineController_list",
-      "StockOrderOfflineController_detail"
+      "StockEnumController_comboBox",
+      "StockEnumController_shopComboBox",
+      "StockBusinessController_commonList",
+      "InventoryStockController_detail",
+      "StockOrderLockController_detail",
+      "StockOrderOfflineController_detail",
+      "StockShopController_settingValuesAdd",
+      "StockOrderOfflineController_create",
+      "StockOrderOfflineController_update"
     ],
-    payloadBuilders: ["buildOrderDetailPayload"],
-    fileFieldRules: []
+    payloadBuilders: ["buildOfflineOrderCreatePayload", "buildOfflineOrderUpdatePayload"],
+    fileFieldRules: ["order_goods_media", "order_paid_voucher", "order_settle_voucher"],
+    flowNotes: [
+      "saas-mini 已能完整还原开单链路，不再是 H5 handoff。",
+      "开单页初始化总是先拉 3 组公共数据：stock enum、shop combo box、staff list。",
+      "真实开单分支由 query.source + query.inStock + query.mode 决定，不能只靠用户一句“开单”直接调用 create。",
+      "锁单转开单提交 create 时会带 lockNo；订单编辑走 update 且不再提交 goodsInfo。",
+      "不在库商品开单的 goodsInfo 由用户输入构造，其中 goodsInfo.imageList 也必须先上传。"
+    ]
   },
   {
-    scenarioKey: "write_with_files",
-    intentPatterns: ["上传图片", "上传凭证", "文件地址", "外部图片"],
+    scenarioKey: "inventory_view_goods",
+    semanticGroup: "inventory_goods",
+    sourceOfTruth: "luxury_flutter.inventory_api_flow",
+    intentPatterns: ["查看商品", "商品详情", "查看库存", "库存详情"],
     steps: [
-      "sync_api_doc",
-      "inspect_payload_file_fields",
-      "upload_external_files",
-      "invoke_operation"
+      "load_stock_detail",
+      "split_button_list",
+      "parse_button_list",
+      "parse_route_info",
+      "derive_follow_up_actions"
     ],
-    requiredUserInputs: [],
-    operationBindings: [],
-    payloadBuilders: ["buildGenericPayload"],
-    fileFieldRules: ["generic_external_file"]
+    requiredUserInputs: ["stockNo"],
+    validationRules: [
+      "查看详情必须先拿到 stockNo。",
+      "若普通 detail 返回 subCode=403，则改走 share detail 只读链路。",
+      "后续动作不能靠 skill 静态假设，必须以 buttonList.status=show 和 routeInfo 的可用性为准。",
+      "状态栏提示依赖 status、lockInfo、pledge、buttonTips 联合判断。"
+    ],
+    interfaceSequence: [
+      { method: "GET", path: "/stock/inventory/stock/detail", purpose: "读取库存详情" },
+      { method: "GET", path: "/stock/inventory/stock/detail/share", purpose: "分享态详情" }
+    ],
+    importantResponseFields: [
+      "subCode",
+      "status",
+      "buttonList",
+      "routeInfo",
+      "lockInfo",
+      "onlineStatus",
+      "goodsSource",
+      "imageList",
+      "detailsImageList",
+      "costList",
+      "priceList",
+      "tagList",
+      "annex",
+      "recycle",
+      "positionInfo",
+      "skuInfo",
+      "argumentList",
+      "buttonTips",
+      "logList",
+      "stockSyncConfigList",
+      "syncProduct",
+      "shopInfo",
+      "goodsNo",
+      "warehouseId",
+      "reservoirId",
+      "noPaiPaiPermissionUrl",
+      "relateOrderNo",
+      "sheetSn"
+    ],
+    detailFieldRoles: [
+      { field: "skuInfo + argumentList + officialPrice", role: "商品基础信息展示区" },
+      { field: "annex + recycle + tagList + positionInfo", role: "更多信息展示区" },
+      { field: "imageList + detailsImageList + costList + priceList", role: "媒体与价格展示区" },
+      { field: "logList + routeInfo.log.redirectType.params.skipUrl", role: "变更信息和日志跳转" },
+      { field: "stockSyncConfigList + syncProduct", role: "同步平台状态和可执行同步动作" },
+      { field: "shopInfo.contactPhone", role: "店铺联系方式动作" },
+      { field: "lockInfo + status + buttonTips + pledge.pledgeExpireTime", role: "顶部状态提示文案" }
+    ],
+    actionDecisionFlow: [
+      {
+        action: "detail display mode",
+        drivenBy: ["subCode"],
+        rule: "普通详情返回 subCode=403 时，页面切换为分享态，只读并改用 /detail/share。"
+      },
+      {
+        action: "visible buttons",
+        drivenBy: ["buttonList[].status", "buttonList[].code", "buttonList[].level"],
+        rule: "仅 status=show 的按钮可执行；code=relocation 或 level in [primary, secondary] 进入右侧主操作区，其余进入左侧次操作区。"
+      },
+      {
+        action: "lock/create-order web actions",
+        drivenBy: ["routeInfo.deliveryLock", "routeInfo.lock", "routeInfo.inStock"],
+        rule: "lock/createOrder 不是本地拼 URL，而是消费 routeInfo.*.redirectType.params.skipUrl。"
+      },
+      {
+        action: "unlock action",
+        drivenBy: ["lockInfo.lockOrderNo"],
+        rule: "解锁动作依赖 lockOrderNo，详情未返回则不能安全执行。"
+      },
+      {
+        action: "relocation action",
+        drivenBy: ["warehouseId", "reservoirId", "positionInfo"],
+        rule: "改位置动作要带当前仓库/库位作为选择器初始值。"
+      },
+      {
+        action: "edit/copy action",
+        drivenBy: ["stockNo", "buttonList[].code"],
+        rule: "编辑和复制入库都以 stockNo 为主键，其中 edit 对应 type=2，copy 对应 type=3。"
+      },
+      {
+        action: "online/offline action",
+        drivenBy: ["onlineStatus", "buttonList[].code"],
+        rule: "是否显示上架/下架动作由 buttonList 决定，不根据 onlineStatus 自己猜。"
+      },
+      {
+        action: "lock banner",
+        drivenBy: ["status", "lockInfo.operatorName", "lockInfo.dtCreated", "lockInfo.isLock"],
+        rule: "status=2 且 lockInfo 完整时展示顶部锁单/开单提示。"
+      },
+      {
+        action: "pledge banner",
+        drivenBy: ["pledge.pledgeExpireTime"],
+        rule: "有质押到期时间时展示顶部质押提示。"
+      },
+      {
+        action: "change-log action",
+        drivenBy: ["logList", "routeInfo.log.redirectType.params.skipUrl"],
+        rule: "只有日志存在且 log 跳转地址存在时，页面才展示“查看变更日志”。"
+      },
+      {
+        action: "sync platform actions",
+        drivenBy: ["syncProduct.list", "noPaiPaiPermissionUrl"],
+        rule: "同步平台开关和可执行动作由 syncProduct.list 每项的 redirectType/canOnline/isOnline 决定，部分平台还会受 noPaiPaiPermissionUrl 限制。"
+      }
+    ],
+    followUpActionBindings: [
+      { code: "edit", routeDependency: null, requiredContext: ["stockNo"] },
+      { code: "copyInWarehouse", routeDependency: null, requiredContext: ["stockNo"] },
+      { code: "relocation", routeDependency: null, requiredContext: ["stockNo", "warehouseId", "reservoirId"] },
+      { code: "lock", routeDependency: "routeInfo.lock or routeInfo.deliveryLock", requiredContext: ["stockNo"] },
+      { code: "unlock", routeDependency: null, requiredContext: ["lockInfo.lockOrderNo"] },
+      { code: "createOrder", routeDependency: "routeInfo.inStock.redirectType.params.skipUrl", requiredContext: ["stockNo"] },
+      { code: "online", routeDependency: null, requiredContext: ["stockNo"] },
+      { code: "offline", routeDependency: null, requiredContext: ["stockNo"] },
+      { code: "print", routeDependency: null, requiredContext: ["stockNo"] },
+      { code: "softDelete/hardDelete/restore/restoreLoss/loss/redeem/createAuction", routeDependency: "depends on buttonList visibility and per-action params", requiredContext: ["stockNo or goodsNo/smuId as returned in detail"] }
+    ],
+    operationBindings: [
+      "InventoryStockController_detail",
+      "InventoryStockController_detailShare"
+    ],
+    payloadBuilders: ["buildStockDetailPayload"],
+    fileFieldRules: [],
+    flowNotes: [
+      "库存详情可执行动作不是 skill 静态硬编码，而是详情接口返回的 buttonList 和 routeInfo 决定。",
+      "若是分享态，则改走 share detail 接口。",
+      "后续编辑、开单、锁单、上下架等动作应先尊重详情返回的按钮配置。",
+      "查看商品不是只查基础字段；还要把 buttonList、routeInfo、lockInfo、positionInfo、skuInfo、argumentList 一并读取，才能还原页面可操作状态。",
+      "buttonList 负责声明有哪些动作可见，routeInfo 负责给出部分动作的真实跳转地址，lockInfo/warehouseId/goodsNo/smuId 等字段负责补足动作执行上下文。"
+    ]
   }
 ];
 let shutdownRequested = false;
@@ -1108,6 +1658,11 @@ async function getPrerequisiteBlockingResponse(command) {
     "install_mcp",
     "set_mcp_config",
     "get_mcp_config",
+    "get_cached_api_doc_summary",
+    "get_cached_api_operation_details",
+    "get_scenario_recipe",
+    "get_api_doc_version",
+    "get_api_doc_document",
     "delete_session",
     "__qr_worker"
   ]);

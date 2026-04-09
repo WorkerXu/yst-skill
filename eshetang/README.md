@@ -4,7 +4,7 @@
 
 - 扫码登录与选店，保存最终 `userToken`
 - 同步远端聚合接口文档到本地缓存
-- 基于本地索引与高频 recipe 加速库存、订单等场景
+- 基于本地索引与已确认的接口数据流 recipe 加速库存场景
 - 在执行写接口前，先把外部文件地址上传为平台文件地址
 
 ## 当前工具
@@ -45,6 +45,25 @@
 4. 命中高频 recipe 或从本地文档读取接口
 5. 预处理文件字段
 6. 调用最终业务接口
+
+## 当前 recipe
+
+- `inventory_add_goods`
+  已确认的库存新增完整数据流：
+  `shop combo box -> category argument -> optional image recognize -> tag list -> brand -> series -> sku -> warehouse/reservoir -> optional analysis content -> media upload -> create`
+  关键点：`categoryId`、`brandId`、`seriesId`、`skuId`、`warehouseId`、`reservoirId`、`finenessValueId` 都必须来自前置接口，不是只记一个 `create`。
+- `inventory_edit_goods`
+  已确认的库存编辑完整数据流：
+  `shop combo box -> stock detail -> category/tag/brand/series/sku/warehouse conditional reselection -> media upload -> update`
+  关键点：编辑以 `detail` 回填为基线；一旦用户修改上游字段，必须重跑依赖接口。
+- `inventory_view_goods`
+  已确认的库存详情接口链：
+  `detail/detailShare -> buttonList + routeInfo + full detail payload`
+  关键点：详情不仅决定展示内容，也决定后续动作。`buttonList` 负责“当前有哪些动作可见”，`routeInfo` 负责部分动作的真实跳转地址，`lockInfo / warehouseId / reservoirId / goodsNo / smuId` 负责补足动作执行上下文。
+- `offline_order_create`
+  已确认的线下开单完整数据流：
+  `stock enum -> shop combo box -> staff list -> branch detail preload(stock detail/lock detail/offline detail) -> optional add setting value -> file upload -> create/update`
+  关键点：开单场景在 `saas-mini` 中已经能完整还原，不再是简单 H5 跳转。真实分支由 `source + inStock + mode` 决定。
 
 ## 文件地址规则
 
