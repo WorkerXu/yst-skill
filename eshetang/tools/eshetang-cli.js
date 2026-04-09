@@ -715,6 +715,7 @@ async function main() {
             "get_scenario_recipe",
             "get_api_doc_version",
             "get_api_doc_document",
+            "get_api_operation_latest_example",
             "upload_external_file",
             "invoke_api_operation",
             "call_remote_mcp_tool"
@@ -752,6 +753,7 @@ async function main() {
         return printJson(await getScenarioRecipe(args));
       case "get_api_doc_version":
       case "get_api_doc_document":
+      case "get_api_operation_latest_example":
       case "upload_external_file":
       case "invoke_api_operation":
         return printJson(await proxyRemoteTool(command, args));
@@ -1915,7 +1917,8 @@ async function getScenarioRecipe(args = {}) {
 async function proxyRemoteTool(toolName, args) {
   const requireLogin = ![
     "get_api_doc_version",
-    "get_api_doc_document"
+    "get_api_doc_document",
+    "get_api_operation_latest_example"
   ].includes(toolName);
 
   if (toolName === "invoke_api_operation") {

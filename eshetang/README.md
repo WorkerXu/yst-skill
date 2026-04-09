@@ -25,6 +25,7 @@
 - `get_scenario_recipe`
 - `get_api_doc_version`
 - `get_api_doc_document`
+- `get_api_operation_latest_example`
 - `upload_external_file`
 - `invoke_api_operation`
 
@@ -66,6 +67,16 @@
 - 不要直接展示 API 参数名
 - 把关键商品信息、金额、状态、人员、图片/凭证整理给用户看
 - 用户明确回复确认后，才能真正写入
+
+## 样例排错
+
+`get_api_operation_latest_example` 已恢复，但它是排错工具，不是常规工具。
+
+只应在下面两种情况下使用：
+- 真实调用已经失败，且暂时无法从上下文排除错误
+- 高度怀疑是 payload/query/path 参数组装错了
+
+它返回的是脱敏后的最近一次成功调用样例，只能拿来参考结构，不能直接复用里面的值。
 
 ## 当前 recipe
 

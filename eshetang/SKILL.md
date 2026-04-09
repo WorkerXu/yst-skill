@@ -76,6 +76,9 @@ description_en: "Eshetang login, local API doc cache, stock/order orchestration"
 - `get_cached_api_operation_details`
 - `get_scenario_recipe`
 
+远端排错工具：
+- `get_api_operation_latest_example`
+
 ## 文件地址硬规则
 
 这条规则必须严格执行：
@@ -369,6 +372,40 @@ description_en: "Eshetang login, local API doc cache, stock/order orchestration"
 - 不能为了继续流程自行猜测品牌、分类、仓库、店铺、日期、状态、分页条件、业务类型、销售员、订单类型等必填参数
 - 只有非必填参数，在用户没有明确表达需要时，才可以先忽略
 
+## 调用样例排错规则
+
+`get_api_operation_latest_example` 已恢复，但只能用于排错，不能作为常规流程依赖。
+
+### 仅允许在以下情况调用
+
+- 真实接口调用已经失败
+- 并且当前无法仅靠上下文、recipe、接口文档排除错误
+- 或者高度怀疑是参数组装、字段结构、枚举值、嵌套层级、payload 形状写错
+
+### 明确禁止
+
+- 不要在正常流程里预先调用它
+- 不要把它当成接口发现工具
+- 不要在还没尝试真实调用前就先查样例
+- 不要因为“想更稳一点”就默认查样例
+
+### 调用后的使用方式
+
+- 只把它当作“最近一次成功调用的脱敏参考结构”
+- 重点看：
+  - query 是否有这个字段
+  - body 是对象还是数组
+  - 某个字段是否在嵌套对象内
+  - 枚举字段大致长什么样
+  - 哪些字段通常根本不会传
+- 不要把样例中的真实值原样复用
+- 即使是样例返回的数据，也要继续遵守“关键参数不能猜”的规则
+
+### 脱敏要求
+
+- 样例返回的所有关键值都应视为脱敏后的结构参考
+- 允许参考结构，不允许依赖真实业务值
+
 ## 缺参时的交互规则
 
 这是强约束：
@@ -517,6 +554,7 @@ description_en: "Eshetang login, local API doc cache, stock/order orchestration"
 
 - `get_api_doc_version`
 - `get_api_doc_document`
+- `get_api_operation_latest_example`
 - `upload_external_file`
 - `invoke_api_operation`
 
