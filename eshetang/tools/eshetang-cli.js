@@ -2212,7 +2212,7 @@ async function preprocessExternalFileFields(body, context) {
 
       cachedUpload = {
         originalUrl: node,
-        uploadedUrl: remoteUpload.upload.uploadedUrl,
+        uploadedUrl: normalizeUploadedFilePath(remoteUpload.upload.uploadedUrl),
         cacheKey: remoteUpload.upload.cacheKey,
         purpose,
         createdAt: safeDateString(),
@@ -2220,6 +2220,7 @@ async function preprocessExternalFileFields(body, context) {
       };
       uploadedCache[cacheKey] = cachedUpload;
     } else {
+      cachedUpload.uploadedUrl = normalizeUploadedFilePath(cachedUpload.uploadedUrl);
       cachedUpload.lastUsedAt = safeDateString();
     }
 
@@ -2278,6 +2279,25 @@ function isExternalFileUrl(value) {
     return !INTERNAL_FILE_HOSTS.some(host => url.hostname === host || url.hostname.endsWith(`.${host}`));
   } catch {
     return false;
+  }
+}
+
+function normalizeUploadedFilePath(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return trimmed.replace(/^\/+/, "");
+  }
+
+  try {
+    const url = new URL(trimmed);
+    const normalizedPath = `${url.pathname}${url.search}`.replace(/^\/+/, "");
+    return normalizedPath || trimmed;
+  } catch {
+    return trimmed;
   }
 }
 
