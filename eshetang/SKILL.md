@@ -619,6 +619,7 @@ description_en: "Eshetang login, local API doc cache, stock/order orchestration"
 - `get_api_operation_latest_example`
 - `upload_external_file`
 - `invoke_api_operation`
+- `call_remote_mcp_tool`
 
 ### 本地 skill 工具
 
@@ -630,12 +631,466 @@ description_en: "Eshetang login, local API doc cache, stock/order orchestration"
 - `select_shop`
 - `get_user_token`
 - `delete_session`
+- `set_mcp_config`
 - `get_mcp_config`
 - `get_integration_status`
 - `sync_api_doc`
 - `get_cached_api_doc_summary`
 - `get_cached_api_operation_details`
 - `get_scenario_recipe`
+
+## CLI 调用格式约定
+
+`./scripts/tool-call.sh` 的用法固定是：
+
+```bash
+./scripts/tool-call.sh <tool_name> '<json_args>'
+```
+
+调用约定：
+
+- 第二个参数就是当前工具自己的 JSON 参数
+- 直接调用工具时，参数放在顶层
+- 只有 `call_remote_mcp_tool` 这个通用代理，外层才使用 `tool_name` 和 `tool_args`
+- 本地 CLI 约定优先使用下划线字段名，如 `scan_token`、`tool_name`、`tool_args`
+
+## 工具使用方法
+
+下面的示例都可以直接在 skill 根目录执行：
+
+```bash
+cd /Users/coderxu/Downloads/小红书/yst-skill/eshetang
+```
+
+### 登录与会话
+
+#### `check_login_status`
+
+用途：
+- 检查当前本地登录态
+- 查看是否已经拿到最终 `userToken`
+
+参数：
+- 无
+
+示例：
+
+```bash
+./scripts/tool-call.sh check_login_status
+```
+
+#### `get_login_qrcode`
+
+用途：
+- 生成登录二维码
+- 启动后台等待扫码 worker
+
+参数：
+- `timeout_seconds`
+  可选，二维码等待超时秒数
+
+示例：
+
+```bash
+./scripts/tool-call.sh get_login_qrcode
+./scripts/tool-call.sh get_login_qrcode '{"timeout_seconds":180}'
+```
+
+#### `login_flow`
+
+用途：
+- 对话式登录入口
+- 自动判断当前是待扫码、待选店还是已登录
+- 也可以在同一入口里直接完成选店
+
+参数：
+- `scan_token`
+  可选，显式指定扫码 token
+- `shop_index`
+  可选，按店铺列表编号选店
+- `account_user_id`
+  可选，按账号 ID 选店
+- `enterprise_no`
+  可选，按店铺号选店
+
+示例：
+
+```bash
+./scripts/tool-call.sh login_flow
+./scripts/tool-call.sh login_flow '{"shop_index":1}'
+./scripts/tool-call.sh login_flow '{"account_user_id":123456}'
+./scripts/tool-call.sh login_flow '{"enterprise_no":"E12345"}'
+```
+
+#### `list_shops`
+
+用途：
+- 扫码成功后列出可选店铺
+
+参数：
+- `scan_token`
+  可选；不传时会自动从本地缓存和状态文件中读取
+
+示例：
+
+```bash
+./scripts/tool-call.sh list_shops
+./scripts/tool-call.sh list_shops '{"scan_token":"your-scan-token"}'
+```
+
+#### `select_shop`
+
+用途：
+- 选定店铺并换取最终 `userToken`
+
+参数：
+- `scan_token`
+  可选；不传时自动读取
+- `shop_index`
+  可选，按店铺序号选
+- `account_user_id`
+  可选，按账号 ID 选
+- `enterprise_no`
+  可选，按店铺号选
+
+示例：
+
+```bash
+./scripts/tool-call.sh select_shop '{"shop_index":1}'
+./scripts/tool-call.sh select_shop '{"account_user_id":123456}'
+./scripts/tool-call.sh select_shop '{"enterprise_no":"E12345"}'
+```
+
+#### `get_user_token`
+
+用途：
+- 读取并在线校验当前最终 `userToken`
+
+参数：
+- 无
+
+示例：
+
+```bash
+./scripts/tool-call.sh get_user_token
+```
+
+#### `delete_session`
+
+用途：
+- 清理本地登录态、二维码缓存和状态文件
+
+参数：
+- 无
+
+示例：
+
+```bash
+./scripts/tool-call.sh delete_session
+```
+
+### 环境与 MCP
+
+#### `install_mcp`
+
+用途：
+- 检查依赖
+- 自动为当前助理安装 MCP 配置
+
+参数：
+- `confirm`
+  可选，传 `true` 表示确认安装
+- `start_install`
+  可选，等价于确认安装
+- `assistant_type`
+  可选，指定助理类型，如 `codex`、`workbuddy`、`cursor`、`cc-code`、`openclaw`
+- `platform`
+  可选，作为 `assistant_type` 的别名
+- `assistantType`
+  可选，作为 `assistant_type` 的兼容别名
+
+示例：
+
+```bash
+./scripts/tool-call.sh install_mcp
+./scripts/tool-call.sh install_mcp '{"confirm":true,"assistant_type":"codex"}'
+```
+
+#### `set_mcp_config`
+
+用途：
+- 查看当前 MCP 配置说明
+- 提示通过 `install_mcp` 或环境变量配置地址
+
+参数：
+- 无
+
+示例：
+
+```bash
+./scripts/tool-call.sh set_mcp_config
+```
+
+#### `get_mcp_config`
+
+用途：
+- 读取当前 MCP 配置
+
+参数：
+- 无
+
+示例：
+
+```bash
+./scripts/tool-call.sh get_mcp_config
+```
+
+#### `get_integration_status`
+
+用途：
+- 联合查看登录态、本地 token、MCP 配置和远端文档连通性
+
+参数：
+- 无
+
+示例：
+
+```bash
+./scripts/tool-call.sh get_integration_status
+```
+
+### 文档与本地索引
+
+#### `sync_api_doc`
+
+用途：
+- 检查远端接口文档版本
+- 如有变化则同步到本地缓存
+
+参数：
+- `force`
+  可选，传 `true` 表示强制重新同步
+
+示例：
+
+```bash
+./scripts/tool-call.sh sync_api_doc
+./scripts/tool-call.sh sync_api_doc '{"force":true}'
+```
+
+#### `get_cached_api_doc_summary`
+
+用途：
+- 查看本地接口文档摘要
+- 包括版本、模块数、接口数和 recipe 绑定情况
+
+参数：
+- `force`
+  可选，传 `true` 时先检查远端版本再返回摘要
+
+示例：
+
+```bash
+./scripts/tool-call.sh get_cached_api_doc_summary
+./scripts/tool-call.sh get_cached_api_doc_summary '{"force":true}'
+```
+
+#### `get_cached_api_operation_details`
+
+用途：
+- 从本地缓存中查看某个接口的完整定义
+
+参数：
+- `operationId`
+  可选，优先按接口 ID 定位
+- `path`
+  可选，按路径定位时使用
+- `method`
+  可选，按路径定位时使用
+- `sourceKey`
+  可选，建议与 `path + method` 一起传
+- `force`
+  可选，先强制同步文档再查
+
+示例：
+
+```bash
+./scripts/tool-call.sh get_cached_api_operation_details '{"operationId":"InventoryStockController_create"}'
+./scripts/tool-call.sh get_cached_api_operation_details '{"path":"/stock/order/offline/create","method":"POST","sourceKey":"stock"}'
+```
+
+#### `get_scenario_recipe`
+
+用途：
+- 查看已内置的高频业务 recipe
+
+参数：
+- `scenarioKey`
+  可选，直接按场景键查询
+- `intent`
+  可选，按自然语言意图匹配
+
+示例：
+
+```bash
+./scripts/tool-call.sh get_scenario_recipe '{"scenarioKey":"offline_order_create"}'
+./scripts/tool-call.sh get_scenario_recipe '{"intent":"新增商品"}'
+```
+
+### 远端 MCP 工具
+
+#### `get_api_doc_version`
+
+用途：
+- 直接查询远端接口文档版本
+
+参数：
+- 无
+
+示例：
+
+```bash
+./scripts/tool-call.sh get_api_doc_version
+```
+
+#### `get_api_doc_document`
+
+用途：
+- 直接获取远端完整接口文档
+
+参数：
+- 无
+
+示例：
+
+```bash
+./scripts/tool-call.sh get_api_doc_document
+```
+
+#### `get_api_operation_latest_example`
+
+用途：
+- 查看某个接口最近 3 条脱敏成功样例
+- 仅用于参数结构排错
+
+参数：
+- `operationId`
+  建议传
+- `path`
+  建议与 `method` 一起传
+- `method`
+  建议与 `path` 一起传
+- `sourceKey`
+  建议补齐
+- `errorContext`
+  可选，补充当前错误上下文
+
+示例：
+
+```bash
+./scripts/tool-call.sh get_api_operation_latest_example '{
+  "operationId":"StockOrderOfflineController_create",
+  "path":"/stock/order/offline/create",
+  "method":"POST",
+  "sourceKey":"stock"
+}'
+```
+
+#### `upload_external_file`
+
+用途：
+- 把外部文件地址上传成平台可用文件地址
+
+参数：
+- `url`
+  必填，外部文件 URL
+- `purpose`
+  必填，上传用途，如 `stock`
+- `sourceKey`
+  可选，建议补齐模块来源
+- `module`
+  可选，建议补齐模块名
+- `operationId`
+  可选，建议补齐当前业务接口 ID
+
+示例：
+
+```bash
+./scripts/tool-call.sh upload_external_file '{
+  "url":"https://example.com/a.jpg",
+  "purpose":"stock",
+  "sourceKey":"stock",
+  "operationId":"StockOrderOfflineController_create"
+}'
+```
+
+#### `invoke_api_operation`
+
+用途：
+- 调用真实业务接口
+- 调用前会先用本地缓存文档校验接口定位
+
+参数：
+- `operationId`
+  建议传
+- `path`
+  建议与 `method` 一起传
+- `method`
+  建议与 `path` 一起传
+- `sourceKey`
+  建议补齐
+- `query`
+  可选，请求 query 参数对象
+- `body`
+  可选，请求 body 对象
+- `pathParams`
+  可选，路径参数对象
+
+示例：
+
+```bash
+./scripts/tool-call.sh invoke_api_operation '{
+  "operationId":"StockOrderOfflineController_create",
+  "path":"/stock/order/offline/create",
+  "method":"POST",
+  "sourceKey":"stock",
+  "body": {}
+}'
+```
+
+#### `call_remote_mcp_tool`
+
+用途：
+- 通用远端 MCP 代理
+- 仅在需要显式调用任意远端工具时使用
+
+参数：
+- `tool_name`
+  必填，远端工具名
+- `tool_args`
+  可选，远端工具参数对象
+
+示例：
+
+```bash
+./scripts/tool-call.sh call_remote_mcp_tool '{
+  "tool_name":"get_api_operation_latest_example",
+  "tool_args":{
+    "operationId":"StockOrderOfflineController_create",
+    "path":"/stock/order/offline/create",
+    "method":"POST",
+    "sourceKey":"stock"
+  }
+}'
+```
+
+### 什么时候用哪个
+
+- 查登录状态、店铺、token、本地缓存、recipe，用本地工具
+- 查远端文档版本和完整文档，用 `get_api_doc_version`、`get_api_doc_document`
+- 查最近成功样例，优先直接用 `get_api_operation_latest_example`
+- 调真实业务接口，用 `invoke_api_operation`
+- 只有要显式代理任意远端工具时，才用 `call_remote_mcp_tool`
 
 ## 显式引用 `$eshetang` 时的要求
 
@@ -658,5 +1113,8 @@ cd scripts
 ./tool-call.sh get_cached_api_doc_summary
 ./tool-call.sh get_cached_api_operation_details '{"operationId":"InventoryStockController_create"}'
 ./tool-call.sh get_scenario_recipe '{"intent":"新增商品"}'
+./tool-call.sh get_api_operation_latest_example '{"operationId":"StockOrderOfflineController_create","path":"/stock/order/offline/create","method":"POST","sourceKey":"stock"}'
+./tool-call.sh invoke_api_operation '{"operationId":"StockOrderOfflineController_create","path":"/stock/order/offline/create","method":"POST","sourceKey":"stock","body":{}}'
+./tool-call.sh call_remote_mcp_tool '{"tool_name":"get_api_operation_latest_example","tool_args":{"operationId":"StockOrderOfflineController_create","path":"/stock/order/offline/create","method":"POST","sourceKey":"stock"}}'
 ./tool-call.sh upload_external_file '{"url":"https://example.com/a.jpg","purpose":"stock"}'
 ```

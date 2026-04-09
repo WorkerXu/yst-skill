@@ -32,6 +32,188 @@
 - `get_api_operation_latest_example`
 - `upload_external_file`
 - `invoke_api_operation`
+- `call_remote_mcp_tool`
+
+## 工具使用方法
+
+统一调用格式：
+
+```bash
+cd /Users/coderxu/Downloads/小红书/yst-skill/eshetang
+./scripts/tool-call.sh <tool_name> '<json_args>'
+```
+
+说明：
+- 第二个参数就是当前工具自己的 JSON 参数
+- 直接调用工具时，参数放在顶层
+- 只有 `call_remote_mcp_tool` 使用外层 `tool_name` 和 `tool_args`
+
+### 登录与会话
+
+- `check_login_status`
+  查看当前登录状态。
+
+```bash
+./scripts/tool-call.sh check_login_status
+```
+
+- `get_login_qrcode`
+  生成二维码并启动后台等待扫码。
+
+```bash
+./scripts/tool-call.sh get_login_qrcode
+./scripts/tool-call.sh get_login_qrcode '{"timeout_seconds":180}'
+```
+
+- `login_flow`
+  自动处理待扫码、待选店、已登录三种状态；也可直接带选店参数。
+
+```bash
+./scripts/tool-call.sh login_flow
+./scripts/tool-call.sh login_flow '{"shop_index":1}'
+./scripts/tool-call.sh login_flow '{"account_user_id":123456}'
+./scripts/tool-call.sh login_flow '{"enterprise_no":"E12345"}'
+```
+
+- `list_shops`
+  列出扫码后的店铺列表。
+
+```bash
+./scripts/tool-call.sh list_shops
+./scripts/tool-call.sh list_shops '{"scan_token":"your-scan-token"}'
+```
+
+- `select_shop`
+  选店并换取最终 `userToken`。
+
+```bash
+./scripts/tool-call.sh select_shop '{"shop_index":1}'
+./scripts/tool-call.sh select_shop '{"account_user_id":123456}'
+./scripts/tool-call.sh select_shop '{"enterprise_no":"E12345"}'
+```
+
+- `get_user_token`
+  读取并校验最终 `userToken`。
+
+```bash
+./scripts/tool-call.sh get_user_token
+```
+
+- `delete_session`
+  清理本地登录态与二维码缓存。
+
+```bash
+./scripts/tool-call.sh delete_session
+```
+
+### 环境与 MCP
+
+- `install_mcp`
+  检查依赖并安装 MCP。可传 `confirm`、`start_install`、`assistant_type`、`platform`、`assistantType`。
+
+```bash
+./scripts/tool-call.sh install_mcp
+./scripts/tool-call.sh install_mcp '{"confirm":true,"assistant_type":"codex"}'
+```
+
+- `set_mcp_config`
+  查看当前 MCP 配置说明。
+
+```bash
+./scripts/tool-call.sh set_mcp_config
+```
+
+- `get_mcp_config`
+  读取 MCP 配置。
+
+```bash
+./scripts/tool-call.sh get_mcp_config
+```
+
+- `get_integration_status`
+  联合查看登录态、MCP 配置与远端文档连通性。
+
+```bash
+./scripts/tool-call.sh get_integration_status
+```
+
+### 文档与本地索引
+
+- `sync_api_doc`
+  同步远端接口文档；可传 `{"force":true}` 强制重新同步。
+
+```bash
+./scripts/tool-call.sh sync_api_doc
+./scripts/tool-call.sh sync_api_doc '{"force":true}'
+```
+
+- `get_cached_api_doc_summary`
+  查看本地接口文档摘要；支持 `force`。
+
+```bash
+./scripts/tool-call.sh get_cached_api_doc_summary
+./scripts/tool-call.sh get_cached_api_doc_summary '{"force":true}'
+```
+
+- `get_cached_api_operation_details`
+  查看本地缓存中的接口详情，支持 `operationId` 或 `path + method + sourceKey`。
+
+```bash
+./scripts/tool-call.sh get_cached_api_operation_details '{"operationId":"InventoryStockController_create"}'
+./scripts/tool-call.sh get_cached_api_operation_details '{"path":"/stock/order/offline/create","method":"POST","sourceKey":"stock"}'
+```
+
+- `get_scenario_recipe`
+  查看高频业务 recipe，支持 `scenarioKey` 或 `intent`。
+
+```bash
+./scripts/tool-call.sh get_scenario_recipe '{"scenarioKey":"offline_order_create"}'
+./scripts/tool-call.sh get_scenario_recipe '{"intent":"新增商品"}'
+```
+
+### 远端 MCP 工具
+
+- `get_api_doc_version`
+  读取远端接口文档版本。
+
+```bash
+./scripts/tool-call.sh get_api_doc_version
+```
+
+- `get_api_doc_document`
+  获取远端完整接口文档。
+
+```bash
+./scripts/tool-call.sh get_api_doc_document
+```
+
+- `get_api_operation_latest_example`
+  查询最近 3 条脱敏成功样例，建议传 `operationId`、`path`、`method`、`sourceKey`。
+
+```bash
+./scripts/tool-call.sh get_api_operation_latest_example '{"operationId":"StockOrderOfflineController_create","path":"/stock/order/offline/create","method":"POST","sourceKey":"stock"}'
+```
+
+- `upload_external_file`
+  上传外部文件地址，常用字段有 `url`、`purpose`、`sourceKey`、`module`、`operationId`。
+
+```bash
+./scripts/tool-call.sh upload_external_file '{"url":"https://example.com/a.jpg","purpose":"stock","sourceKey":"stock","operationId":"StockOrderOfflineController_create"}'
+```
+
+- `invoke_api_operation`
+  调真实业务接口。顶层直接传 `operationId`、`path`、`method`、`sourceKey`，业务参数放 `query`、`body`、`pathParams`。
+
+```bash
+./scripts/tool-call.sh invoke_api_operation '{"operationId":"StockOrderOfflineController_create","path":"/stock/order/offline/create","method":"POST","sourceKey":"stock","body":{}}'
+```
+
+- `call_remote_mcp_tool`
+  通用远端代理。外层固定传 `tool_name` 和 `tool_args`。
+
+```bash
+./scripts/tool-call.sh call_remote_mcp_tool '{"tool_name":"get_api_operation_latest_example","tool_args":{"operationId":"StockOrderOfflineController_create","path":"/stock/order/offline/create","method":"POST","sourceKey":"stock"}}'
+```
 
 ## 本地缓存
 
