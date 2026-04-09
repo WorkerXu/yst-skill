@@ -916,6 +916,16 @@ function safeDateString(date = new Date()) {
   return date.toISOString();
 }
 
+function truncateString(value, maxLength) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  if (!Number.isFinite(maxLength) || maxLength <= 0 || value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength - 3)}...`;
+}
+
 async function delay(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1804,16 +1814,15 @@ async function getIntegrationStatus() {
   let remoteDocument = null;
   let remoteError = null;
 
-  if (config) {
+  if (config && token && token.userToken) {
     try {
-      const remote = await callRemoteMcpTool("get_api_doc_version", {}, {
-        requireLogin: false,
-        mcpConfig: config
-      });
+      const remote = await callRemoteMcpTool("get_api_doc_version", {}, { mcpConfig: config, userTokenInfo: token });
       remoteDocument = remote.document || null;
     } catch (error) {
       remoteError = error instanceof Error ? error.message : String(error);
     }
+  } else if (config) {
+    remoteError = "当前未登录；扫码登录并完成选店后，才能查询远端文档与使用任何 MCP 工具。";
   }
 
   return {
@@ -1894,6 +1903,7 @@ async function getCachedApiOperationDetails(args = {}) {
 }
 
 async function getScenarioRecipe(args = {}) {
+  await getRequiredUserToken();
   const intent = typeof args.intent === "string" ? args.intent.trim() : "";
   const scenarioKey = typeof args.scenarioKey === "string" ? args.scenarioKey.trim() : "";
   const recipe = scenarioKey
@@ -1915,11 +1925,7 @@ async function getScenarioRecipe(args = {}) {
 }
 
 async function proxyRemoteTool(toolName, args) {
-  const requireLogin = ![
-    "get_api_doc_version",
-    "get_api_doc_document",
-    "get_api_operation_latest_example"
-  ].includes(toolName);
+  const requireLogin = true;
 
   if (toolName === "invoke_api_operation") {
     const synced = await ensureApiDocSynced();
@@ -1942,24 +1948,44 @@ async function proxyRemoteTool(toolName, args) {
       body: processedBody.body
     } : args;
 
-    const result = await callRemoteMcpTool(toolName, remoteArgs, {
-      requireLogin,
-      userTokenInfo
-    });
+    try {
+      const result = await callRemoteMcpTool(toolName, remoteArgs, {
+        requireLogin,
+        userTokenInfo
+      });
 
-    return {
-      ok: true,
-      mcpUrl: (await loadMcpConfig()).mcpUrl,
-      toolName,
-      usedUserToken: Boolean(userTokenInfo && userTokenInfo.userToken),
-      syncedDoc: synced,
-      preflight: {
-        operation,
-        scenarioRecipe,
-        uploadedFiles: processedBody.uploads
-      },
-      result
-    };
+      return {
+        ok: true,
+        mcpUrl: (await loadMcpConfig()).mcpUrl,
+        toolName,
+        usedUserToken: Boolean(userTokenInfo && userTokenInfo.userToken),
+        syncedDoc: synced,
+        preflight: {
+          operation,
+          scenarioRecipe,
+          uploadedFiles: processedBody.uploads
+        },
+        result
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        mcpUrl: (await loadMcpConfig()).mcpUrl,
+        toolName,
+        usedUserToken: Boolean(userTokenInfo && userTokenInfo.userToken),
+        syncedDoc: synced,
+        preflight: {
+          operation,
+          scenarioRecipe,
+          uploadedFiles: processedBody.uploads
+        },
+        error: {
+          message
+        },
+        nextStepSuggestion: buildLatestExampleSuggestion(operation, message)
+      };
+    }
   }
 
   const result = await callRemoteMcpTool(toolName, args, {
@@ -1982,7 +2008,7 @@ async function callRemoteMcpToolEntry(args) {
   }
 
   return callRemoteMcpTool(toolName, args.tool_args || {}, {
-    requireLogin: args.require_login !== false
+    requireLogin: true
   });
 }
 
@@ -1992,7 +2018,7 @@ async function callRemoteMcpTool(toolName, toolArgs, options = {}) {
     fail("当前没有可用的 mcp_url。请先执行 install_mcp 完成 MCP 安装，或设置环境变量 ESHETANG_MCP_URL。");
   }
 
-  const userTokenInfo = options.userTokenInfo || (options.requireLogin === false ? await getSavedToken() : await getRequiredUserToken());
+  const userTokenInfo = options.userTokenInfo || await getRequiredUserToken();
   const headers = buildRemoteHeaders(mcpConfig, userTokenInfo);
   const sessionId = await initializeRemoteMcp(mcpConfig.mcpUrl, headers);
   await notifyRemoteInitialized(mcpConfig.mcpUrl, sessionId, headers);
@@ -2009,10 +2035,32 @@ function pickOperationLocatorArgs(toolArgs = {}) {
   return args;
 }
 
+function buildLatestExampleSuggestion(operation, errorMessage) {
+  return {
+    shouldCheckLatestExample: true,
+    reason: "invoke_api_operation 调用失败，建议立刻查询最近 3 条脱敏成功样例，协助排查参数结构、字段层级或枚举格式问题。",
+    toolName: "get_api_operation_latest_example",
+    toolArgs: {
+      operationId: operation.operationId,
+      path: operation.path,
+      method: operation.method,
+      sourceKey: operation.sourceKey,
+      errorContext: truncateString(`invoke_api_operation failed: ${errorMessage}`, 500)
+    },
+    focus: [
+      "query 是否缺字段或字段名不对",
+      "body 应该是对象、数组还是原始值",
+      "字段是否应该放在更深一层的嵌套对象里",
+      "枚举值、列表项和文件字段格式是否与成功样例一致"
+    ]
+  };
+}
+
 async function ensureApiDocSynced(options = {}) {
   const force = options.force === true;
+  const userTokenInfo = await getRequiredUserToken();
   const versionResult = await callRemoteMcpTool("get_api_doc_version", {}, {
-    requireLogin: false
+    userTokenInfo
   });
   const remoteVersion = versionResult.document || null;
   if (!remoteVersion) {
@@ -2031,7 +2079,7 @@ async function ensureApiDocSynced(options = {}) {
   }
 
   const documentResult = await callRemoteMcpTool("get_api_doc_document", {}, {
-    requireLogin: false
+    userTokenInfo
   });
   const document = documentResult.document || null;
   if (!document) {
