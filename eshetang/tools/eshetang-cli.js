@@ -15,6 +15,10 @@ const TOKEN_FILE = path.join(DATA_DIR, "user-token.json");
 const SCAN_TOKEN_FILE = path.join(DATA_DIR, "scan-token.json");
 const STATUS_FILE = path.join(DATA_DIR, "login-status.json");
 const MCP_CONFIG_FILE = path.join(DATA_DIR, "mcp-config.json");
+const API_DOC_VERSION_FILE = path.join(DATA_DIR, "api-doc-version.json");
+const API_DOC_DOCUMENT_FILE = path.join(DATA_DIR, "api-doc-document.json");
+const API_DOC_INDEX_FILE = path.join(DATA_DIR, "api-doc-index.json");
+const UPLOADED_FILE_CACHE_FILE = path.join(DATA_DIR, "uploaded-file-cache.json");
 const PID_FILE = path.join(DATA_DIR, "login-worker.pid");
 const QR_IMAGE_FILE = path.join(OUTPUT_DIR, "login-qrcode.png");
 const QR_BASE64_FILE = path.join(DATA_DIR, "login-qrcode.txt");
@@ -39,6 +43,91 @@ const SUPPORTED_ASSISTANT_TYPES = [
 ];
 const DEFAULT_MCP_BUSINESS = "saas_mcp";
 const DEFAULT_MCP_BFF_BASE_URL = "https://bff.eshetang.com";
+const DEFAULT_FILE_UPLOAD_PURPOSE = "stock";
+const INTERNAL_FILE_HOSTS = [
+  "eshetang.com",
+  "imgs.eshetang.com"
+];
+const FILE_PATH_PURPOSE_RULES = [
+  { pattern: /^imageList\[\d+\]\.fileUrl$/, purpose: "stock" },
+  { pattern: /^detailsImageList\[\d+\]\.fileUrl$/, purpose: "stock" },
+  { pattern: /^annex\.imageList\[\d+\]\.fileUrl$/, purpose: "stock" },
+  { pattern: /^costList\[\d+\]\.imageList\[\d+\]\.fileUrl$/, purpose: "stock" },
+  { pattern: /^recycle\.imageList\[\d+\]\.fileUrl$/, purpose: "recovery" },
+  { pattern: /^paidInfo\.paidVoucher\[\d+\]$/, purpose: "receipt" },
+  { pattern: /^settleInfo\.settleVoucher\[\d+\]$/, purpose: "receipt" }
+];
+const SCENARIO_RECIPES = [
+  {
+    scenarioKey: "create_stock",
+    intentPatterns: ["新增商品", "添加商品", "新增库存", "创建库存"],
+    steps: [
+      "lookup_brand",
+      "lookup_category",
+      "lookup_series",
+      "lookup_warehouse",
+      "preprocess_files",
+      "invoke_create_stock"
+    ],
+    requiredUserInputs: ["categoryId", "goodsSource", "onlineStatus", "status", "description"],
+    operationBindings: [
+      "BrandController_comboBox",
+      "CategoryController_stockCategoryList",
+      "SeriesController_comboBox",
+      "InventoryWarehouseController_list",
+      "InventoryStockController_create"
+    ],
+    payloadBuilders: ["buildCreateStockPayload"],
+    fileFieldRules: ["stock_media"]
+  },
+  {
+    scenarioKey: "create_order",
+    intentPatterns: ["卖出", "开单", "创建订单", "客户订单", "销售订单"],
+    steps: [
+      "lookup_sale_user",
+      "lookup_order_type",
+      "preprocess_files",
+      "invoke_create_order"
+    ],
+    requiredUserInputs: ["type", "saleUserIds", "saleUserName", "goodsInfo", "source"],
+    operationBindings: [
+      "BusinessController_comboBox",
+      "StockEnumController_shopComboBox",
+      "StockOrderOfflineController_create"
+    ],
+    payloadBuilders: ["buildCreateOrderPayload"],
+    fileFieldRules: ["receipt_media"]
+  },
+  {
+    scenarioKey: "query_order_detail",
+    intentPatterns: ["查询订单详情", "订单详情", "库存订单详情"],
+    steps: [
+      "lookup_order_list",
+      "invoke_order_detail"
+    ],
+    requiredUserInputs: ["wmsOrderNo"],
+    operationBindings: [
+      "StockOrderOfflineController_list",
+      "StockOrderOfflineController_detail"
+    ],
+    payloadBuilders: ["buildOrderDetailPayload"],
+    fileFieldRules: []
+  },
+  {
+    scenarioKey: "write_with_files",
+    intentPatterns: ["上传图片", "上传凭证", "文件地址", "外部图片"],
+    steps: [
+      "sync_api_doc",
+      "inspect_payload_file_fields",
+      "upload_external_files",
+      "invoke_operation"
+    ],
+    requiredUserInputs: [],
+    operationBindings: [],
+    payloadBuilders: ["buildGenericPayload"],
+    fileFieldRules: ["generic_external_file"]
+  }
+];
 let shutdownRequested = false;
 let playwrightChromium = null;
 
@@ -70,11 +159,13 @@ async function main() {
             "set_mcp_config",
             "get_mcp_config",
             "get_integration_status",
-            "refresh_api_catalog",
-            "get_api_catalog_summary",
-            "search_api_operations",
-            "get_api_operation_details",
-            "get_api_operation_latest_example",
+            "sync_api_doc",
+            "get_cached_api_doc_summary",
+            "get_cached_api_operation_details",
+            "get_scenario_recipe",
+            "get_api_doc_version",
+            "get_api_doc_document",
+            "upload_external_file",
             "invoke_api_operation",
             "call_remote_mcp_tool"
           ]
@@ -101,11 +192,17 @@ async function main() {
         return printJson(await getMcpConfig(args));
       case "get_integration_status":
         return printJson(await getIntegrationStatus(args));
-      case "refresh_api_catalog":
-      case "get_api_catalog_summary":
-      case "search_api_operations":
-      case "get_api_operation_details":
-      case "get_api_operation_latest_example":
+      case "sync_api_doc":
+        return printJson(await syncApiDoc(args));
+      case "get_cached_api_doc_summary":
+        return printJson(await getCachedApiDocSummary(args));
+      case "get_cached_api_operation_details":
+        return printJson(await getCachedApiOperationDetails(args));
+      case "get_scenario_recipe":
+        return printJson(await getScenarioRecipe(args));
+      case "get_api_doc_version":
+      case "get_api_doc_document":
+      case "upload_external_file":
       case "invoke_api_operation":
         return printJson(await proxyRemoteTool(command, args));
       case "call_remote_mcp_tool":
@@ -1147,16 +1244,16 @@ async function getIntegrationStatus() {
   const config = await loadMcpConfig();
   const token = await getSavedToken();
   const loginStatus = await readJson(STATUS_FILE, null);
-  let remoteCatalog = null;
+  let remoteDocument = null;
   let remoteError = null;
 
   if (config) {
     try {
-      const remote = await callRemoteMcpTool("get_api_catalog_summary", {}, {
+      const remote = await callRemoteMcpTool("get_api_doc_version", {}, {
         requireLogin: false,
         mcpConfig: config
       });
-      remoteCatalog = remote.result || null;
+      remoteDocument = remote.document || null;
     } catch (error) {
       remoteError = error instanceof Error ? error.message : String(error);
     }
@@ -1173,24 +1270,151 @@ async function getIntegrationStatus() {
     mcp: {
       configured: Boolean(config),
       config: config ? publicMcpConfig(config) : null,
-      remoteCatalog,
+      remoteDocument,
       remoteError
     }
   };
 }
 
+async function syncApiDoc(args = {}) {
+  const synced = await ensureApiDocSynced({
+    force: args.force === true
+  });
+
+  return {
+    ok: true,
+    ...synced
+  };
+}
+
+async function getCachedApiDocSummary(args = {}) {
+  const synced = await ensureApiDocSynced({
+    force: args.force === true
+  });
+  const document = await readJson(API_DOC_DOCUMENT_FILE, null);
+  const index = await readJson(API_DOC_INDEX_FILE, null);
+
+  if (!document || !index) {
+    fail("本地接口文档缓存不存在，请先执行 sync_api_doc。");
+  }
+
+  return {
+    ok: true,
+    synced,
+    summary: {
+      title: document.title,
+      version: document.version,
+      fingerprint: document.fingerprint,
+      fetchedAt: document.fetchedAt,
+      operationCount: document.operations.length,
+      sourceVersions: document.sourceVersions || [],
+      moduleCount: Object.keys(index.operationsByModule || {}).length,
+      scenarioRecipes: SCENARIO_RECIPES.map(recipe => ({
+        scenarioKey: recipe.scenarioKey,
+        steps: recipe.steps,
+        operationBindings: recipe.operationBindings
+      }))
+    }
+  };
+}
+
+async function getCachedApiOperationDetails(args = {}) {
+  const synced = await ensureApiDocSynced({
+    force: args.force === true
+  });
+  const cached = await loadCachedApiArtifacts();
+  const operation = findCachedOperation(args, cached.document, cached.index);
+
+  if (!operation) {
+    fail("本地文档中未找到匹配接口，请提供 operationId，或同时提供 path + method。");
+  }
+
+  return {
+    ok: true,
+    synced,
+    operation
+  };
+}
+
+async function getScenarioRecipe(args = {}) {
+  const intent = typeof args.intent === "string" ? args.intent.trim() : "";
+  const scenarioKey = typeof args.scenarioKey === "string" ? args.scenarioKey.trim() : "";
+  const recipe = scenarioKey
+    ? SCENARIO_RECIPES.find(item => item.scenarioKey === scenarioKey)
+    : matchScenarioRecipe(intent);
+
+  if (!recipe) {
+    return {
+      ok: false,
+      message: "未命中预置流程，请改用本地文档检索接口定义。",
+      availableScenarioKeys: SCENARIO_RECIPES.map(item => item.scenarioKey)
+    };
+  }
+
+  return {
+    ok: true,
+    recipe
+  };
+}
+
 async function proxyRemoteTool(toolName, args) {
   const requireLogin = ![
-    "refresh_api_catalog",
-    "get_api_catalog_summary",
-    "search_api_operations",
-    "get_api_operation_details",
-    "get_api_operation_latest_example"
+    "get_api_doc_version",
+    "get_api_doc_document"
   ].includes(toolName);
 
-  return callRemoteMcpTool(toolName, args, {
+  if (toolName === "invoke_api_operation") {
+    const synced = await ensureApiDocSynced();
+    const cached = await loadCachedApiArtifacts();
+    const operation = findCachedOperation(args, cached.document, cached.index);
+
+    if (!operation) {
+      fail("本地文档中未找到要调用的接口，请先同步文档并确认 operationId 或 path + method。");
+    }
+
+    const scenarioRecipe = matchScenarioRecipeByOperation(operation);
+    const userTokenInfo = requireLogin ? await getRequiredUserToken() : await getSavedToken();
+    const processedBody = await preprocessExternalFileFields(args.body, {
+      operation,
+      mcpConfig: await loadMcpConfig(),
+      userTokenInfo
+    });
+    const remoteArgs = processedBody.changed ? {
+      ...args,
+      body: processedBody.body
+    } : args;
+
+    const result = await callRemoteMcpTool(toolName, remoteArgs, {
+      requireLogin,
+      userTokenInfo
+    });
+
+    return {
+      ok: true,
+      mcpUrl: (await loadMcpConfig()).mcpUrl,
+      toolName,
+      usedUserToken: Boolean(userTokenInfo && userTokenInfo.userToken),
+      syncedDoc: synced,
+      preflight: {
+        operation,
+        scenarioRecipe,
+        uploadedFiles: processedBody.uploads
+      },
+      result
+    };
+  }
+
+  const result = await callRemoteMcpTool(toolName, args, {
     requireLogin
   });
+
+  return {
+    ok: true,
+    mcpUrl: (await loadMcpConfig()).mcpUrl,
+    toolName,
+    usedUserToken: false,
+    result
+  };
 }
 
 async function callRemoteMcpToolEntry(args) {
@@ -1210,43 +1434,11 @@ async function callRemoteMcpTool(toolName, toolArgs, options = {}) {
     fail("当前没有可用的 mcp_url。请先执行 install_mcp 完成 MCP 安装，或设置环境变量 ESHETANG_MCP_URL。");
   }
 
-  const userTokenInfo = options.requireLogin === false ? await getSavedToken() : await getRequiredUserToken();
+  const userTokenInfo = options.userTokenInfo || (options.requireLogin === false ? await getSavedToken() : await getRequiredUserToken());
   const headers = buildRemoteHeaders(mcpConfig, userTokenInfo);
   const sessionId = await initializeRemoteMcp(mcpConfig.mcpUrl, headers);
   await notifyRemoteInitialized(mcpConfig.mcpUrl, sessionId, headers);
-
-  if (toolName === "invoke_api_operation") {
-    const detailArgs = pickOperationLocatorArgs(toolArgs);
-    const operationDetails = await invokeRemoteTool(
-      mcpConfig.mcpUrl,
-      sessionId,
-      headers,
-      "get_api_operation_details",
-      detailArgs
-    );
-    const result = await invokeRemoteTool(mcpConfig.mcpUrl, sessionId, headers, toolName, toolArgs);
-
-    return {
-      ok: true,
-      mcpUrl: mcpConfig.mcpUrl,
-      toolName,
-      usedUserToken: Boolean(userTokenInfo && userTokenInfo.userToken),
-      preflight: {
-        operationDetails
-      },
-      result
-    };
-  }
-
-  const result = await invokeRemoteTool(mcpConfig.mcpUrl, sessionId, headers, toolName, toolArgs);
-
-  return {
-    ok: true,
-    mcpUrl: mcpConfig.mcpUrl,
-    toolName,
-    usedUserToken: Boolean(userTokenInfo && userTokenInfo.userToken),
-    result
-  };
+  return invokeRemoteTool(mcpConfig.mcpUrl, sessionId, headers, toolName, toolArgs);
 }
 
 function pickOperationLocatorArgs(toolArgs = {}) {
@@ -1257,6 +1449,281 @@ function pickOperationLocatorArgs(toolArgs = {}) {
     }
   }
   return args;
+}
+
+async function ensureApiDocSynced(options = {}) {
+  const force = options.force === true;
+  const versionResult = await callRemoteMcpTool("get_api_doc_version", {}, {
+    requireLogin: false
+  });
+  const remoteVersion = versionResult.document || null;
+  if (!remoteVersion) {
+    fail("远端未返回接口文档版本信息。");
+  }
+
+  const localVersion = await readJson(API_DOC_VERSION_FILE, null);
+  const cacheMissing = !fileExists(API_DOC_DOCUMENT_FILE) || !fileExists(API_DOC_INDEX_FILE);
+  const changed = force || cacheMissing || !localVersion || localVersion.fingerprint !== remoteVersion.fingerprint;
+
+  if (!changed) {
+    return {
+      changed: false,
+      document: remoteVersion
+    };
+  }
+
+  const documentResult = await callRemoteMcpTool("get_api_doc_document", {}, {
+    requireLogin: false
+  });
+  const document = documentResult.document || null;
+  if (!document) {
+    fail("远端未返回完整接口文档。");
+  }
+
+  const index = buildApiDocIndex(document);
+  await writeJson(API_DOC_VERSION_FILE, remoteVersion);
+  await writeJson(API_DOC_DOCUMENT_FILE, document);
+  await writeJson(API_DOC_INDEX_FILE, index);
+
+  return {
+    changed: true,
+    document: remoteVersion
+  };
+}
+
+async function loadCachedApiArtifacts() {
+  const document = await readJson(API_DOC_DOCUMENT_FILE, null);
+  const index = await readJson(API_DOC_INDEX_FILE, null);
+
+  if (!document || !index) {
+    fail("本地接口文档缓存不存在，请先执行 sync_api_doc。");
+  }
+
+  return { document, index };
+}
+
+function buildApiDocIndex(document) {
+  const operationsById = {};
+  const operationsByMethodPath = {};
+  const operationsByModule = {};
+  const keywordIndex = {};
+
+  for (const operation of document.operations || []) {
+    if (operation.operationId) {
+      operationsById[operation.operationId] = operation.key;
+    }
+    operationsByMethodPath[buildMethodPathKey(operation)] = operation.key;
+    if (!operationsByModule[operation.module]) {
+      operationsByModule[operation.module] = [];
+    }
+    operationsByModule[operation.module].push(operation.key);
+
+    for (const keyword of extractOperationKeywords(operation)) {
+      if (!keywordIndex[keyword]) {
+        keywordIndex[keyword] = [];
+      }
+      if (!keywordIndex[keyword].includes(operation.key)) {
+        keywordIndex[keyword].push(operation.key);
+      }
+    }
+  }
+
+  return {
+    generatedAt: safeDateString(),
+    operationsById,
+    operationsByMethodPath,
+    operationsByModule,
+    keywordIndex,
+    scenarioRecipes: SCENARIO_RECIPES
+  };
+}
+
+function extractOperationKeywords(operation) {
+  const raw = [
+    operation.operationId,
+    operation.summary,
+    operation.description,
+    operation.module,
+    operation.sourceKey,
+    operation.path,
+    ...(Array.isArray(operation.tags) ? operation.tags : [])
+  ].filter(Boolean).join(" ");
+
+  return Array.from(new Set(
+    raw
+      .split(/[\s/,_\-:()[\]{}|]+/)
+      .map(item => item.trim().toLowerCase())
+      .filter(item => item.length >= 2)
+  ));
+}
+
+function buildMethodPathKey(operationOrLocator) {
+  const method = String(operationOrLocator.method || "").toUpperCase();
+  const pathValue = String(operationOrLocator.path || "");
+  const sourceKey = operationOrLocator.sourceKey ? String(operationOrLocator.sourceKey) : "";
+  return `${sourceKey}:${method} ${pathValue}`;
+}
+
+function findCachedOperation(locator, document, index) {
+  const operations = Array.isArray(document.operations) ? document.operations : [];
+  if (locator.operationId && index.operationsById && index.operationsById[locator.operationId]) {
+    return operations.find(item => item.key === index.operationsById[locator.operationId]) || null;
+  }
+
+  if (locator.path && locator.method) {
+    const key = buildMethodPathKey(locator);
+    const operationKey = index.operationsByMethodPath ? index.operationsByMethodPath[key] : null;
+    if (operationKey) {
+      return operations.find(item => item.key === operationKey) || null;
+    }
+  }
+
+  return null;
+}
+
+function matchScenarioRecipe(intent) {
+  if (!intent) {
+    return null;
+  }
+
+  return SCENARIO_RECIPES.find(recipe =>
+    recipe.intentPatterns.some(pattern => intent.includes(pattern))
+  ) || null;
+}
+
+function matchScenarioRecipeByOperation(operation) {
+  return SCENARIO_RECIPES.find(recipe =>
+    recipe.operationBindings.includes(operation.operationId)
+  ) || null;
+}
+
+async function preprocessExternalFileFields(body, context) {
+  if (!body || typeof body !== "object") {
+    return {
+      changed: false,
+      body,
+      uploads: []
+    };
+  }
+
+  const clonedBody = JSON.parse(JSON.stringify(body));
+  const uploadedCache = await readJson(UPLOADED_FILE_CACHE_FILE, {});
+  const uploads = [];
+  let changed = false;
+
+  async function visit(node, pathParts, parent, key) {
+    if (Array.isArray(node)) {
+      for (let index = 0; index < node.length; index += 1) {
+        await visit(node[index], [...pathParts, `[${index}]`], node, index);
+      }
+      return;
+    }
+
+    if (node && typeof node === "object") {
+      for (const [childKey, childValue] of Object.entries(node)) {
+        await visit(childValue, [...pathParts, childKey], node, childKey);
+      }
+      return;
+    }
+
+    if (typeof node !== "string") {
+      return;
+    }
+
+    const normalizedPath = normalizeNodePath(pathParts);
+    const purpose = inferUploadPurpose(normalizedPath);
+    if (!purpose) {
+      return;
+    }
+
+    if (!isExternalFileUrl(node)) {
+      return;
+    }
+
+    const cacheKey = `${purpose}:${node}`;
+    let cachedUpload = uploadedCache[cacheKey] || null;
+    if (!cachedUpload) {
+      const remoteUpload = await callRemoteMcpTool("upload_external_file", {
+        url: node,
+        purpose,
+        sourceKey: context.operation.sourceKey,
+        module: context.operation.module,
+        operationId: context.operation.operationId
+      }, {
+        requireLogin: Boolean(context.userTokenInfo && context.userTokenInfo.userToken),
+        userTokenInfo: context.userTokenInfo,
+        mcpConfig: context.mcpConfig
+      });
+
+      cachedUpload = {
+        originalUrl: node,
+        uploadedUrl: remoteUpload.upload.uploadedUrl,
+        cacheKey: remoteUpload.upload.cacheKey,
+        purpose,
+        createdAt: safeDateString(),
+        lastUsedAt: safeDateString()
+      };
+      uploadedCache[cacheKey] = cachedUpload;
+    } else {
+      cachedUpload.lastUsedAt = safeDateString();
+    }
+
+    parent[key] = cachedUpload.uploadedUrl;
+    uploads.push(cachedUpload);
+    changed = true;
+  }
+
+  await visit(clonedBody, [], null, null);
+
+  if (changed) {
+    await writeJson(UPLOADED_FILE_CACHE_FILE, uploadedCache);
+  }
+
+  return {
+    changed,
+    body: clonedBody,
+    uploads
+  };
+}
+
+function normalizeNodePath(pathParts) {
+  return pathParts
+    .reduce((acc, part) => {
+      if (String(part).startsWith("[")) {
+        const last = acc.pop() || "";
+        acc.push(`${last}${part}`);
+        return acc;
+      }
+      acc.push(String(part));
+      return acc;
+    }, [])
+    .join(".");
+}
+
+function inferUploadPurpose(normalizedPath) {
+  const matchedRule = FILE_PATH_PURPOSE_RULES.find(rule => rule.pattern.test(normalizedPath));
+  if (matchedRule) {
+    return matchedRule.purpose;
+  }
+
+  if (/(image|file|media|voucher|annex)/i.test(normalizedPath)) {
+    return DEFAULT_FILE_UPLOAD_PURPOSE;
+  }
+
+  return null;
+}
+
+function isExternalFileUrl(value) {
+  if (typeof value !== "string" || !/^https?:\/\//i.test(value)) {
+    return false;
+  }
+
+  try {
+    const url = new URL(value);
+    return !INTERNAL_FILE_HOSTS.some(host => url.hostname === host || url.hostname.endsWith(`.${host}`));
+  } catch {
+    return false;
+  }
 }
 
 function normalizeAssistantType(value) {
