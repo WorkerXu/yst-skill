@@ -15,9 +15,25 @@ description_en: "Eshetang open capabilities with login prerequisite and on-deman
 在下面这些场景使用 `eshetang`：
 
 - 用户要登录易奢堂后台并拿到 `userToken`
-- 用户要查看“添加库存、修改库存、删除库存、创建订单”等开放能力的完整 API 串联流程
+- 用户要查看"添加库存、修改库存、删除库存、创建订单"等开放能力的完整 API 串联流程
 - 用户要确认某个业务能力的前置条件、接口顺序、字段来源、关键校验
 - 用户要通过 BFF 脚本执行业务接口
+
+## 意图路由规则
+
+当用户表达的意图涉及以下关键词或语义时，必须路由到对应能力：
+
+| 用户表达 / 关键词 | 路由到的能力 | 对应 reference |
+|---|---|---|
+| 添加库存、新增商品、录入商品、添加商品 | 添加库存商品 | `references/inventory-add-goods.md` |
+| 查看商品详情、商品信息 | 查看库存商品详情 | `references/inventory-detail-goods.md` |
+| 盘亏、报损 | 库存商品盘亏 | `references/inventory-loss-goods.md` |
+| 销售图、销售图片 | 生成库存商品销售图 | `references/inventory-sale-image-goods.md` |
+| 更改位置、移动、换仓库、换库区、移到、搬到、放到、创建新仓库放商品、新仓库放商品、放到新仓库、移到新仓库、商品搬家 | 更改库存商品位置 | `references/inventory-relocation-goods.md` |
+| 商品列表、库存列表 | 库存商品列表 | `references/inventory-list-goods.md` |
+| 上架、下架 | 库存商品上架/下架 | `references/inventory-online-goods.md` |
+| 删除商品、移除商品 | 库存商品删除 | `references/inventory-delete-goods.md` |
+| 开单、创建订单 | 库存商品开单 | `references/inventory-create-order-goods.md` |
 
 ## 能力边界
 
@@ -50,7 +66,7 @@ description_en: "Eshetang open capabilities with login prerequisite and on-deman
 2. 选店
 3. 获取最终 `userToken`
 
-这里的“后续动作”包括但不限于：
+这里的"后续动作"包括但不限于：
 
 - 读取具体业务 reference
 - 分析用户给出的商品链接
@@ -77,6 +93,26 @@ description_en: "Eshetang open capabilities with login prerequisite and on-deman
   - 优先使用 UI 选择框让用户选择
 - 如果当前 agent 不支持 UI 选择框：
   - 再退回为文本列举候选项让用户确认
+
+### 缺参必问规则
+
+- 任何接口的必填参数，如果无法从以下来源唯一确定其值，**必须先询问用户**，不能自行猜测或编造：
+  - 用户当前对话中明确提供的信息
+  - 前置接口返回的结果
+  - 该能力的 reference 文档中明确写死的默认值或固定规则
+- 如果必填参数的值存在多个合理候选，也必须让用户确认，不能默认选第一个
+- 即使参数有业务上的常见默认值，只要 reference 中没有写死该默认值，就不能自行填充
+
+### 写操作确认规则
+
+- 任何**写操作**（包括但不限于：添加库存、更改位置、删除、盘亏、开单、上架/下架）在真正调用接口之前，**必须**先向用户展示一份**自然语言的数据确认单**
+- 确认单必须包含：
+  - 本次操作的业务含义（如"添加库存商品""更改商品位置"等）
+  - 即将提交的所有必填参数和关键可选参数的值，用自然语言描述（不要只贴 JSON）
+  - 任何从上下文推断的参数值，必须明确标注来源
+- 只有用户**明确确认**（如"确认""没问题""执行"等肯定回复）后，才能调用写接口
+- 如果用户修改了确认单中的任何参数，必须重新更新确认单后再确认
+- 用户未确认时，不得以任何理由跳过确认步骤直接调用写接口
 
 ## 可视化任务编排协议
 
@@ -119,6 +155,6 @@ description_en: "Eshetang open capabilities with login prerequisite and on-deman
 
 ### 2. 读取具体能力 reference
 
-根据用户目标，从“能力边界”中选择对应的单个 reference 读取。
+根据用户目标，从"能力边界"中选择对应的单个 reference 读取。
 
 不要把其他能力 reference 一起读进上下文。
