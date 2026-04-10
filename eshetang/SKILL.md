@@ -33,6 +33,14 @@ description_en: "Eshetang open capabilities with login prerequisite and on-deman
   参考 `references/inventory-sale-image-goods.md`
 - 更改库存商品位置
   参考 `references/inventory-relocation-goods.md`
+- 库存商品列表
+  参考 `references/inventory-list-goods.md`
+- 库存商品上架/下架
+  参考 `references/inventory-online-goods.md`
+- 库存商品删除
+  参考 `references/inventory-delete-goods.md`
+- 库存商品开单
+  参考 `references/inventory-create-order-goods.md`
 
 ## 强制前置条件
 
