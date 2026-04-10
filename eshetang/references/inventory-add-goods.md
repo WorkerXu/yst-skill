@@ -94,7 +94,7 @@
   - `seriesNumber`：用户提供的独立编码
   - `warehouseId` / `reservoirId`：用户已确认商品位置时传入；未选位置时传 `0`
   - `tagList`：用户已选择或新增标签时传入
-  - `annex`：用户已填写附件、保卡信息或保卡照片留底时传入
+  - `annex`：必填；用户未提供附件或保卡信息时传默认空对象 `{ "annexList": [], "hasGuaranteeCard": 0, "guaranteeCardTime": "", "imageList": [] }`
   - `argumentList`：用户已填写分类参数时传入
   - `remarkList`：备注列表；没有备注时可不传
 - 提交前必须先完成媒体上传：
@@ -812,7 +812,7 @@
 
 ### `annex`
 
-- 可选
+- 必填
 - 数据类型：
   - 对象
 - 用途：
@@ -822,6 +822,9 @@
   - `hasGuaranteeCard`：是否有保卡；`1` 表示有保卡，`2` 表示无保卡，`0` 表示默认值
   - `guaranteeCardTime`：保卡年份
   - `imageList`：保卡、独立编码照片留底列表
+- 默认值：
+  - 当用户没有提供任何附件、保卡信息或保卡照片时，必须传入默认空对象：`{ "annexList": [], "hasGuaranteeCard": 0, "guaranteeCardTime": "", "imageList": [] }`
+  - 后端接口对该字段有 `@NotNull` 校验，不允许不传或传 `null`
 - 每个附件项结构：
   - `settingValueId`：附件类型 ID
   - `settingValueName`：附件类型名称
@@ -843,7 +846,8 @@
   - 使用工具 `tool.shop_combo_box` 读取 `attachment`
   - 保卡、独立编码照片留底使用工具 `tool.upload_stock_file` 上传
 - 路径选择规则：
-  - 用户没有提供任何附件或保卡信息时，可不传 `annex`
+  - 用户没有提供任何附件或保卡信息时，必须传入默认空对象 `{ "annexList": [], "hasGuaranteeCard": 0, "guaranteeCardTime": "", "imageList": [] }`
+  - 不能不传 `annex`，也不能传 `null`
   - 如果用户提供附件名称，使用工具 `tool.shop_combo_box` 读取 `attachment` 后匹配
   - 如果用户提供附件名称但工具 `tool.shop_combo_box` 返回的 `attachment` 没有匹配项，必须让用户重新确认附件名称，不要直接新增附件类型
   - 如果用户明确表示有保卡，写 `hasGuaranteeCard=1`
@@ -1301,7 +1305,8 @@
 - `warehouseId` 和 `reservoirId` 必须来自用户确认或工具 `tool.warehouse_reservoir_list` 返回的同一仓库库区链路；未选位置时都传 `0`
 - `tagList` 可选；传入时每项必须有 `tagId` 和 `tagName`
 - 如果用户明确提供的标签不在现有候选中，必须先用工具 `tool.inventory_tag_create` 新增，再重新读取候选并使用真实 `tagId` 和 `tagName`
-- `annex` 可选；传入附件时 `annex.annexList[]` 必须来自工具 `tool.shop_combo_box` 返回的 `attachment`
+- `annex` 必填；用户未提供附件或保卡信息时，必须传入默认空对象 `{ "annexList": [], "hasGuaranteeCard": 0, "guaranteeCardTime": "", "imageList": [] }`
+- `annex` 不能不传或传 `null`；后端 `@NotNull` 校验会拒绝
 - `annex.hasGuaranteeCard=1` 时可传 `annex.guaranteeCardTime`；`annex.hasGuaranteeCard=2` 时必须清空 `annex.guaranteeCardTime`
 - `annex.imageList` 的图片必须先使用工具 `tool.upload_stock_file` 上传
 - 保卡、独立编码照片留底必须写入 `annex.imageList`，不能写入其他图片字段
@@ -1312,5 +1317,5 @@
 - `imageList` 和 `detailsImageList` 的每个媒体项都必须有 `fileUrl`
 - `remarkList` 可选；传入时每项使用 `id` 和 `remark`
 - 最终 payload 不要传值为 `null` 的字段
-- 可选对象没有任何有效子字段时不要传该对象
+- 可选对象没有任何有效子字段时不要传该对象（`annex` 除外，`annex` 是必填字段，即使子字段全为空也必须传入默认空对象）
 - 可选数组没有任何有效元素时不要传该数组
