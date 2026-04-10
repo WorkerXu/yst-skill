@@ -5,7 +5,7 @@
 
 ## 安装目标
 
-把当前目录作为一个 Codex skill 安装到本机 skill 目录中，目录名保持为：
+把当前目录作为一个  skill 安装到本机 skill 目录中，目录名保持为：
 
 ```text
 eshetang
