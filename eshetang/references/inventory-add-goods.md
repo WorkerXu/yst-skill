@@ -71,6 +71,8 @@
   - `tool.stock_create`
 - 请求参数：
   - `goodsSource`：已确认并归一化后的商品来源
+  - `onlineStatus`：已确认的上架状态；未明确时默认 `OFFLINE`
+  - `status`：固定传 `1`
   - `categoryId`：已确认的分类 ID
   - `finenessValueId`：已确认的成色 ID
   - `description`：用户提供的商品描述
@@ -102,6 +104,11 @@
 - 如果创建接口要求的其他必填参数尚未补齐：
   - 不允许直接提交
   - 必须先继续补参数规则或让用户补充
+- 最终 payload 组装规则：
+  - 不传值为 `null` 的字段
+  - 不传没有任何有效子字段的可选对象
+  - 不传没有任何有效元素的可选数组
+  - 必填字段不能用空字符串、空数组或空对象占位
 - 成功后从返回中读取：
   - `stockNo`
 
@@ -147,6 +154,39 @@
   - `PLEDGE` 必须要求 `pledge.pledgeExpireTime`
   - 当 `goodsSource` 从 `CONSIGN_SALE` 或 `PLEDGE` 改为 `OWN` 时，必须清空 `goodsContact`
   - 当 `goodsSource` 从 `PLEDGE` 改为其他类型时，必须清空 `pledge`
+
+### `onlineStatus`
+
+- 必填
+- 数据类型：
+  - 字符串
+- 用途：
+  - 创建库存接口请求体中的 `onlineStatus`
+- 可选值：
+  - `OFFLINE`：仅入库，不上架
+  - `ONLINE`：入库并上架
+- 获取方式：
+  - 用户明确说“上架”“入库并上架”“发布上架”时，取 `ONLINE`
+  - 用户明确说“仅入库”“先不上架”“保存不发布”时，取 `OFFLINE`
+  - 用户未明确时，默认取 `OFFLINE`
+- 规则：
+  - `goodsSource=PLEDGE` 时按真实创建流程只能仅入库，取 `OFFLINE`
+  - 如果 `onlineStatus=OFFLINE`，不得传需要上架后同步的 `syncRangList`
+  - 如果用户要求同步微购相册或同行圈，必须先确认 `onlineStatus=ONLINE`
+
+### `status`
+
+- 必填
+- 数据类型：
+  - 数字
+- 用途：
+  - 创建库存接口请求体中的 `status`
+- 固定值：
+  - `1`
+- 规则：
+  - 新增库存商品时固定表示在库
+  - 不要让用户选择 `2`、`3`、`4`
+  - 不要因为用户说“上架/下架”改变 `status`；上架/下架只影响 `onlineStatus`
 
 ### `goodsContact`
 
@@ -1224,6 +1264,8 @@
 ## 关键校验
 
 - `goodsSource` 必填
+- `onlineStatus` 必填；未明确时传 `OFFLINE`
+- `status` 必填；新增库存固定传 `1`
 - `categoryId` 必填
 - `finenessValueId` 必填
 - `description` 必填
@@ -1269,3 +1311,6 @@
 - 细节图属于 `detailsImageList`，并且必须传 `type=1`
 - `imageList` 和 `detailsImageList` 的每个媒体项都必须有 `fileUrl`
 - `remarkList` 可选；传入时每项使用 `id` 和 `remark`
+- 最终 payload 不要传值为 `null` 的字段
+- 可选对象没有任何有效子字段时不要传该对象
+- 可选数组没有任何有效元素时不要传该数组
