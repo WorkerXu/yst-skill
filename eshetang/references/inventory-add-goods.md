@@ -87,6 +87,12 @@
   - `costList`：用户已添加附加成本时传入
   - `priceList`：用户已填写销售价格时传入
   - `recycle`：用户已填写任一回收信息时传入
+  - `count`：库存数量；未提供时传 `1`
+  - `identifier`：用户提供的自定义货号
+  - `seriesNumber`：用户提供的独立编码
+  - `warehouseId` / `reservoirId`：用户已确认商品位置时传入；未选位置时传 `0`
+  - `tagList`：用户已选择或新增标签时传入
+  - `annex`：用户已填写附件、保卡信息或保卡照片留底时传入
   - `argumentList`：用户已填写分类参数时传入
   - `remarkList`：备注列表；没有备注时可不传
 - 提交前必须先完成媒体上传：
@@ -647,6 +653,174 @@
   - 如果只拿到工具 `tool.upload_stock_file` 返回的 `data.url`，必须先去掉 host
   - 不要把回收备注图写入商品 `imageList`、`detailsImageList` 或 `costList[].imageList`
 
+### `count`
+
+- 可选
+- 数据类型：
+  - 数字
+- 用途：
+  - 创建库存接口请求体中的 `count`
+- 用户可能提供的形式：
+  - 商品数量
+  - 库存数量
+  - 件数
+- 获取方式：
+  - 用户直接提供
+  - 用户未提供时使用默认值
+- 路径选择规则：
+  - 用户未明确提供时传 `1`
+  - 该参数不通过工具获取
+- 归一化规则：
+  - 写入整数
+  - 当前创建库存只按单件商品处理；不要主动要求用户补商品数量
+
+### `identifier`
+
+- 可选
+- 数据类型：
+  - 字符串
+- 用途：
+  - 创建库存接口请求体中的 `identifier`
+- 用户可能提供的形式：
+  - 自定义货号
+  - 货号
+  - 店铺货号
+  - rfid
+- 获取方式：
+  - 用户直接提供
+  - 用户未提供时可不传或传空字符串
+- 路径选择规则：
+  - 该参数不通过工具获取
+  - 如果用户说“自定义货号”或“货号”，写入 `identifier`
+- 归一化规则：
+  - 去掉首尾空白后写入 `identifier`
+  - 不要把自定义货号写入 `goodsNo`
+
+### `seriesNumber`
+
+- 可选
+- 数据类型：
+  - 字符串
+- 用途：
+  - 创建库存接口请求体中的 `seriesNumber`
+- 用户可能提供的形式：
+  - 独立编码
+  - 编码
+  - 唯一码
+- 获取方式：
+  - 用户直接提供
+  - 用户未提供时可不传或传空字符串
+- 路径选择规则：
+  - 该参数不通过工具获取
+  - 如果用户说“独立编码”，写入 `seriesNumber`
+- 归一化规则：
+  - 去掉首尾空白后写入 `seriesNumber`
+  - 不要把独立编码写入 `seriesId`、`seriesName` 或 `skuName`
+
+### `warehouseId` / `reservoirId`
+
+- 可选
+- 数据类型：
+  - 数字
+- 用途：
+  - 创建库存接口请求体中的 `warehouseId`
+  - 创建库存接口请求体中的 `reservoirId`
+- 用户可能提供的形式：
+  - 商品位置
+  - 仓库名称
+  - 库区名称
+  - 仓库 ID 和库区 ID
+- 获取方式：
+  - 用户直接提供仓库或库区
+  - 使用工具 `tool.warehouse_reservoir_list` 获取仓库库区候选
+- 路径选择规则：
+  - 如果用户未提供商品位置，最终传 `warehouseId=0`、`reservoirId=0`
+  - 如果用户提供仓库名称或库区名称，使用工具 `tool.warehouse_reservoir_list` 获取候选后匹配
+  - 如果用户只确认仓库，没有确认库区，传确认仓库的 `warehouseId`，`reservoirId` 传 `0`
+  - 如果用户确认了具体库区，必须同时写入对应仓库的 `warehouseId` 和该库区的 `reservoirId`
+  - 如果工具 `tool.warehouse_reservoir_list` 返回多个候选，必须让用户确认
+  - 不要编造 `warehouseId` 或 `reservoirId`
+- 归一化规则：
+  - 未选位置时两个字段都传 `0`
+  - 仓库和库区必须来自同一个候选链路
+
+### `tagList`
+
+- 可选
+- 数据类型：
+  - 数组
+- 用途：
+  - 创建库存接口请求体中的 `tagList`
+- 每个标签项结构：
+  - `tagId`：标签 ID
+  - `tagName`：标签名称
+- 用户可能提供的形式：
+  - 标签
+  - 商品标签
+  - 筛选标签
+- 获取方式：
+  - 用户直接提供标签名称
+  - 使用工具 `tool.inventory_tag_list` 获取标签候选
+  - 使用工具 `tool.inventory_tag_create` 新建标签
+- 路径选择规则：
+  - 用户未提供标签时，可不传 `tagList`
+  - 如果用户提供标签名称，使用工具 `tool.inventory_tag_list` 获取候选后匹配
+  - 如果用户明确提供的标签名称不存在：
+    - 必须先让用户确认是否新增该标签
+    - 用户确认新增后，使用工具 `tool.inventory_tag_create` 创建标签
+    - 新增后必须重新使用工具 `tool.inventory_tag_list` 读取标签候选，用真实返回的 `id` 和 `tagName` 组装 `tagList[]`
+  - 如果工具 `tool.inventory_tag_list` 返回多个相近候选，必须让用户确认
+- 归一化规则：
+  - 每个传入项必须有 `tagId` 和 `tagName`
+  - 标签名称最长 6 个字；超过时必须先让用户确认精简内容
+  - 不要用用户输入的标签名伪造 `tagId`
+
+### `annex`
+
+- 可选
+- 数据类型：
+  - 对象
+- 用途：
+  - 创建库存接口请求体中的 `annex`
+- 对象结构：
+  - `annexList`：附件列表
+  - `hasGuaranteeCard`：是否有保卡；`1` 表示有保卡，`2` 表示无保卡，`0` 表示默认值
+  - `guaranteeCardTime`：保卡年份
+  - `imageList`：保卡、独立编码照片留底列表
+- 每个附件项结构：
+  - `settingValueId`：附件类型 ID
+  - `settingValueName`：附件类型名称
+  - `isPlatform`：是否平台配置项
+- 每个保卡照片留底项结构：
+  - `fileUrl`：上传后的平台文件地址
+  - `type`：固定按图片传 `1`
+  - `id`：新增时传 `0`
+  - `sort`：排序值，从 `0` 开始
+- 用户可能提供的形式：
+  - 附件
+  - 配件
+  - 是否有保卡
+  - 保卡年份
+  - 保卡照片
+  - 独立编码照片留底
+- 获取方式：
+  - 用户直接提供附件、保卡状态、保卡年份或照片
+  - 使用工具 `tool.shop_combo_box` 读取 `attachment`
+  - 保卡、独立编码照片留底使用工具 `tool.upload_stock_file` 上传
+- 路径选择规则：
+  - 用户没有提供任何附件或保卡信息时，可不传 `annex`
+  - 如果用户提供附件名称，使用工具 `tool.shop_combo_box` 读取 `attachment` 后匹配
+  - 如果用户提供附件名称但工具 `tool.shop_combo_box` 返回的 `attachment` 没有匹配项，必须让用户重新确认附件名称，不要直接新增附件类型
+  - 如果用户明确表示有保卡，写 `hasGuaranteeCard=1`
+  - 如果用户明确表示无保卡，写 `hasGuaranteeCard=2`，并清空 `guaranteeCardTime`
+  - 只有 `hasGuaranteeCard=1` 时才写入 `guaranteeCardTime`
+  - 保卡、独立编码照片留底只属于 `annex.imageList`
+- 归一化规则：
+  - `annexList[]` 的每个附件项必须来自工具 `tool.shop_combo_box` 返回的 `attachment`
+  - `annex.imageList[].fileUrl` 必须使用工具 `tool.upload_stock_file` 返回的 `relativeUrl`
+  - 如果只拿到工具 `tool.upload_stock_file` 返回的 `data.url`，必须先去掉 host
+  - 不要把保卡、独立编码照片留底写入商品 `imageList`、`detailsImageList`、`costList[].imageList` 或 `recycle.imageList`
+
 ### `remarkList`
 
 - 可选
@@ -788,6 +962,9 @@
     - `name`：回收类型名称
     - `isPlatform`：是否平台配置项
   - `data.attachment`
+    - `id`：附件类型 ID
+    - `name`：附件类型名称
+    - `isPlatform`：是否平台配置项
 
 ### `tool.category_argument_list`
 
@@ -852,6 +1029,53 @@
   - `data.list[].identityType`
   - `data.list[].identityTypeName`
   - `data.list[].isManager`
+
+### `tool.warehouse_reservoir_list`
+
+- 用途：
+  - 获取商品位置可用的仓库和库区候选
+- 命令：
+  - `./scripts/request-bff.sh GET /stock/inventory/warehouse-reservoir/list '{"page":1,"pageSize":60,"warehouseStatus":1,"reservoirStatus":1}'`
+- 入参：
+  - `page`：固定可传 `1`
+  - `pageSize`：固定可传 `60`
+  - `warehouseStatus`：可传 `1`，表示启用仓库
+  - `reservoirStatus`：可传 `1`，表示启用库区
+  - `warehouseIdList`：仓库 ID 列表，可选；按指定仓库过滤时传入
+  - `isCommonUse`：是否主仓库，可选
+- 出参：
+  - `data.list[].id`
+  - `data.list[].name`
+  - `data.list[].status`
+  - `data.list[].isCommonUse`
+  - `data.list[].reservoirList[].id`
+  - `data.list[].reservoirList[].name`
+  - `data.list[].reservoirList[].status`
+
+### `tool.inventory_tag_list`
+
+- 用途：
+  - 获取库存商品标签候选
+- 命令：
+  - `./scripts/request-bff.sh GET /stock/inventory/tag/list '{"page":1,"pageSize":100}'`
+- 入参：
+  - `page`：固定可传 `1`
+  - `pageSize`：固定可传 `100`
+- 出参：
+  - `data.total`
+  - `data.list[].id`
+  - `data.list[].tagName`
+
+### `tool.inventory_tag_create`
+
+- 用途：
+  - 新建库存商品标签
+- 命令：
+  - `./scripts/request-bff.sh POST /stock/inventory/tag/create '{"tagName":"<tagName>"}'`
+- 入参：
+  - `tagName`：用户确认新增的标签名称，必填
+- 出参：
+  - `data.tagId`
 
 ### `tool.image_recognize_spu_sku`
 
@@ -991,6 +1215,16 @@
 - `recycle.imageList` 的图片必须先使用工具 `tool.upload_stock_file` 上传
 - 如果用户明确提供的成本类型、售价类型或回收类型不在现有候选中，必须先用工具 `tool.shop_setting_values_update` 新增，再重新读取候选并使用真实 `id` 和 `name`
 - 不要直接用用户输入的类型名称伪造 `settingValueId` 或跳过自定义类型新增步骤
+- `count` 未提供时传 `1`；如果传入，必须是整数
+- 自定义货号必须写入 `identifier`，不要写入 `goodsNo`
+- 独立编码必须写入 `seriesNumber`，不要写入系列或型号相关字段
+- `warehouseId` 和 `reservoirId` 必须来自用户确认或工具 `tool.warehouse_reservoir_list` 返回的同一仓库库区链路；未选位置时都传 `0`
+- `tagList` 可选；传入时每项必须有 `tagId` 和 `tagName`
+- 如果用户明确提供的标签不在现有候选中，必须先用工具 `tool.inventory_tag_create` 新增，再重新读取候选并使用真实 `tagId` 和 `tagName`
+- `annex` 可选；传入附件时 `annex.annexList[]` 必须来自工具 `tool.shop_combo_box` 返回的 `attachment`
+- `annex.hasGuaranteeCard=1` 时可传 `annex.guaranteeCardTime`；`annex.hasGuaranteeCard=2` 时必须清空 `annex.guaranteeCardTime`
+- `annex.imageList` 的图片必须先使用工具 `tool.upload_stock_file` 上传
+- 保卡、独立编码照片留底必须写入 `annex.imageList`，不能写入其他图片字段
 - 成本图片、回收备注图、商品图、细节图必须写入各自字段，不能互相混用
 - `imageList` 至少包含 1 个 `type=1` 的商品图片
 - 商品视频属于 `imageList`，并且必须传 `type=2`
