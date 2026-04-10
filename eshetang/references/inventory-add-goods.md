@@ -257,7 +257,7 @@
   - 如果用户已明确给出 `categoryId`，优先校验后直接使用
   - 如果用户给出的是分类名称，使用工具 `tool.shop_combo_box` 读取 `shopCategory` 后匹配
   - 如果用户没有给分类，但提供了图片，可使用工具 `tool.image_recognize_spu_sku` 获取候选分类
-  - 执行工具 `tool.image_recognize_spu_sku` 前必须先确定用于识款的图片
+  - 执行工具 `tool.image_recognize_spu_sku` 前必须先确定用于识款的图片，且必须使用工具 `tool.upload_stock_file` 返回的完整路径（`data.url`）作为入参，不能使用相对路径
   - 如果有多张候选图片且用户未明确指定，不允许默认选择，必须先让用户确认 1 张
   - 如果识款返回了 `categoryId` 和 `categoryName`，可作为默认候选，但仍允许用户改选
 - 确认规则：
@@ -1121,9 +1121,10 @@
 - 用途：
   - 通过图片识款获取分类、品牌、系列、型号、公价候选
 - 命令：
-  - `./scripts/request-bff.sh GET /product/image/recognize/spuSku '{"image":"<recognizedImageRelativeUrl>"}'`
+  - `./scripts/request-bff.sh GET /product/image/recognize/spuSku '{"image":"<recognizedImageFullUrl>"}'`
 - 入参：
-  - `image`：用户确认用于识款的图片通过工具 `tool.upload_stock_file` 上传后得到的相对路径，必填
+  - `image`：用户确认用于识款的图片通过工具 `tool.upload_stock_file` 上传后得到的**完整路径**（即 `data.url`），必填
+  - ⚠️ **必须是完整路径**（如 `https://imgs.eshetang.com/stock/a.jpg`），**不能传相对路径**（如 `stock/a.jpg`），否则识款接口会校验失败
 - 出参：
   - `data.list[].categoryId`
   - `data.list[].categoryName`
@@ -1310,6 +1311,7 @@
 - `annex.hasGuaranteeCard=1` 时可传 `annex.guaranteeCardTime`；`annex.hasGuaranteeCard=2` 时必须清空 `annex.guaranteeCardTime`
 - `annex.imageList` 的图片必须先使用工具 `tool.upload_stock_file` 上传
 - 保卡、独立编码照片留底必须写入 `annex.imageList`，不能写入其他图片字段
+- 调用工具 `tool.image_recognize_spu_sku` 时，`image` 参数必须传完整路径（`data.url`），不能传相对路径（`relativeUrl`）
 - 成本图片、回收备注图、商品图、细节图必须写入各自字段，不能互相混用
 - `imageList` 至少包含 1 个 `type=1` 的商品图片
 - 商品视频属于 `imageList`，并且必须传 `type=2`
