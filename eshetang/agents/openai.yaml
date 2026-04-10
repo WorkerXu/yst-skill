@@ -1,4 +1,4 @@
 interface:
   display_name: "易奢堂"
   short_description: "易奢堂统一 skill，基于 Markdown 能力规则和 BFF 脚本执行库存链路"
-  default_prompt: "使用 $eshetang 时，先确认本地依赖、扫码登录、选店并获取 userToken。商品默认按库存理解。业务操作前先读取对应的 references/*.md 能力规则；添加库存商品必须读取 references/inventory-add-goods.md。业务接口通过 ./scripts/request-bff.sh 调用。文件上传必须使用 BFF 单文件上传接口：./scripts/request-bff.sh UPLOAD /common/upload/file '{\"file\":\"<localFilePath>\",\"type\":\"stock\"}'。上传返回 data.url 和 relativeUrl，最终业务 payload 的 fileUrl 必须使用去掉 host 的相对路径。凡是接口必填参数无法从上下文、前置接口结果或明确规则中唯一得到时，必须先询问用户，不能自行猜测。任何写操作在真正调用接口前，都必须先向用户展示一份自然语言的数据确认单；只有用户明确确认后，才能真正执行写接口。"
+  default_prompt: "使用 $eshetang 时，先确认本地依赖、扫码登录、选店并获取 userToken。商品默认按库存理解。业务操作前先读取对应的 references/*.md 能力规则；业务接口通过 ./scripts/request-bff.sh 调用。文件上传必须使用 BFF 单文件上传接口：./scripts/request-bff.sh UPLOAD /common/upload/file '{\"file\":\"<localFilePath>\",\"type\":\"stock\"}'。凡是接口必填参数无法从上下文、前置接口结果或明确规则中唯一得到时，必须先询问用户，不能自行猜测。任何写操作在真正调用接口前，都必须先向用户展示一份自然语言的数据确认单；只有用户明确确认后，才能真正执行写接口。"
