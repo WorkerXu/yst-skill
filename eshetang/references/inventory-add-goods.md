@@ -1121,10 +1121,12 @@
 - 用途：
   - 通过图片识款获取分类、品牌、系列、型号、公价候选
 - 命令：
-  - `./scripts/request-bff.sh GET /product/image/recognize/spuSku '{"image":"<recognizedImageFullUrl>"}'`
+  - `./scripts/request-bff.sh GET /product/image/recognize/spuSku '{"image":"<recognizedImageFullUrl>","type":"sku"}'`
 - 入参：
   - `image`：用户确认用于识款的图片通过工具 `tool.upload_stock_file` 上传后得到的**完整路径**（即 `data.url`），必填
-  - ⚠️ **必须是完整路径**（如 `https://imgs.eshetang.com/stock/a.jpg`），**不能传相对路径**（如 `stock/a.jpg`），否则识款接口会校验失败
+    - ⚠️ **必须是完整路径**（如 `https://imgs.eshetang.com/stock/a.jpg`），**不能传相对路径**（如 `stock/a.jpg`），否则识款接口会校验失败
+  - `type`：识款类型，必填，固定传 `"sku"`
+    - ⚠️ **必须传 `"sku"`**，不传或传错会导致识款结果为空或接口校验失败
 - 出参：
   - `data.list[].categoryId`
   - `data.list[].categoryName`
@@ -1311,7 +1313,7 @@
 - `annex.hasGuaranteeCard=1` 时可传 `annex.guaranteeCardTime`；`annex.hasGuaranteeCard=2` 时必须清空 `annex.guaranteeCardTime`
 - `annex.imageList` 的图片必须先使用工具 `tool.upload_stock_file` 上传
 - 保卡、独立编码照片留底必须写入 `annex.imageList`，不能写入其他图片字段
-- 调用工具 `tool.image_recognize_spu_sku` 时，`image` 参数必须传完整路径（`data.url`），不能传相对路径（`relativeUrl`）
+- 调用工具 `tool.image_recognize_spu_sku` 时，`image` 参数必须传完整路径（`data.url`），不能传相对路径（`relativeUrl`）；`type` 参数必须传 `"sku"`
 - 成本图片、回收备注图、商品图、细节图必须写入各自字段，不能互相混用
 - `imageList` 至少包含 1 个 `type=1` 的商品图片
 - 商品视频属于 `imageList`，并且必须传 `type=2`
