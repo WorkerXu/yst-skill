@@ -22,9 +22,17 @@ description_en: "Eshetang open capabilities with login prerequisite and on-deman
 ## 能力边界
 
 - 登录前置能力
-  参考 [references/login.md](/Users/coderxu/Downloads/小红书/yst-skill/eshetang/references/login.md)
+  参考 `references/login.md`
 - 添加库存商品
-  参考 [references/inventory-add-goods.md](/Users/coderxu/Downloads/小红书/yst-skill/eshetang/references/inventory-add-goods.md)
+  参考 `references/inventory-add-goods.md`
+- 查看库存商品详情
+  参考 `references/inventory-detail-goods.md`
+- 库存商品盘亏
+  参考 `references/inventory-loss-goods.md`
+- 生成库存商品销售图
+  参考 `references/inventory-sale-image-goods.md`
+- 更改库存商品位置
+  参考 `references/inventory-relocation-goods.md`
 
 ## 强制前置条件
 
@@ -36,7 +44,7 @@ description_en: "Eshetang open capabilities with login prerequisite and on-deman
 
 如果未登录：
 
-- 不能先分析“添加库存商品”的业务参数
+- 不能先读取除登录能力外的任何具体能力
 - 不能先执行任何开放 API
 - 不能假定已有可用 token
 - 只能先引导用户进入登录能力
@@ -55,7 +63,7 @@ description_en: "Eshetang open capabilities with login prerequisite and on-deman
 
 先读：
 
-- [references/login.md](/Users/coderxu/Downloads/小红书/yst-skill/eshetang/references/login.md)
+- `references/login.md`
 
 常用本地脚本：
 
@@ -67,24 +75,6 @@ description_en: "Eshetang open capabilities with login prerequisite and on-deman
 
 ### 2. 读取具体能力 reference
 
-例如用户要“添加库存商品”，只加载：
-
-- [references/inventory-add-goods.md](/Users/coderxu/Downloads/小红书/yst-skill/eshetang/references/inventory-add-goods.md)
+根据用户目标，从“能力边界”中选择对应的单个 reference 读取。
 
 不要把其他能力 reference 一起读进上下文。
-
-### 3. 用通用工具调用 BFF 接口
-
-```bash
-./scripts/request-bff.sh GET /stock/enum/shop/combo-box
-./scripts/request-bff.sh GET /stock/inventory/stock/argument/list '{"categoryId":102}'
-./scripts/request-bff.sh POST /stock/inventory/stock/create '{"categoryId":102}'
-```
-
-## Gotchas
-
-- “商品”在当前业务默认按“库存”理解
-- 登录是所有开放能力的前置条件，不满足就不能继续
-- 添加库存不是单接口调用，而是一整段 API 串联流程
-- `categoryId`、`brandId`、`seriesId`、`skuId`、`warehouseId`、`reservoirId`、`finenessValueId` 都有明确前置来源，不能猜
-- 文件上传统一通过 BFF 单文件上传接口，最终业务 payload 使用去掉 host 的相对路径
