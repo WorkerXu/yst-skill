@@ -331,13 +331,6 @@ flowchart TD
   - 能读取到有效 `userToken` 才算登录最终完成
   - 读取失败时，要结合 `tool.check_login_status` 判断当前是待扫码、待选店还是已失效
 
-## 本地脚本
-
-```bash
-./scripts/login.sh
-./scripts/status.sh
-./scripts/user-token.sh
-```
 
 ## 硬规则
 

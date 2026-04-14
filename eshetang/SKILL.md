@@ -152,14 +152,6 @@ description_en: "Eshetang open capabilities with login prerequisite and on-deman
 
 - `references/login.md`
 
-常用本地脚本：
-
-```bash
-./scripts/login.sh
-./scripts/status.sh
-./scripts/user-token.sh
-```
-
 ### 2. 读取具体能力 reference
 
 根据用户目标，从"能力边界"中选择对应的单个 reference 读取。
