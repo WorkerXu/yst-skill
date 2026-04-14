@@ -238,6 +238,29 @@ function truncateString(value, maxLength) {
   return `${value.slice(0, maxLength - 3)}...`;
 }
 
+function getStatusText(status) {
+  switch (status) {
+    case "waiting_for_scan":
+      return "待扫码";
+    case "waiting_for_shop_selection":
+      return "待选店";
+    case "logged_in":
+      return "已登录";
+    case "logged_out":
+      return "已失效";
+    case "timed_out":
+      return "二维码已过期";
+    case "error":
+      return "状态检查失败";
+    case "unknown":
+      return "状态未知";
+    case "no_shop_available":
+      return "无可用店铺";
+    default:
+      return "状态未知";
+  }
+}
+
 async function delay(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -336,7 +359,33 @@ async function launchContext(options = {}) {
     contextOptions.storageState = STATE_FILE;
   }
   const context = await browser.newContext(contextOptions);
+  await hydrateContextAuth(context);
   return { browser, context };
+}
+
+async function hydrateContextAuth(context) {
+  const cookies = await getSavedCookies();
+  const validCookies = cookies.filter((cookie) => cookie && cookie.name && cookie.value);
+  if (validCookies.length > 0) {
+    await context.addCookies(validCookies);
+    return;
+  }
+
+  const tokenInfo = await readJson(TOKEN_FILE, null);
+  if (tokenInfo && tokenInfo.userToken) {
+    await context.addCookies([
+      {
+        name: USER_TOKEN_COOKIE,
+        value: tokenInfo.userToken,
+        domain: ".pc.eshetang.com",
+        path: "/",
+        expires: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+        httpOnly: false,
+        secure: false,
+        sameSite: "Lax"
+      }
+    ]);
+  }
 }
 
 function getPlaywrightChromium() {
@@ -371,10 +420,16 @@ async function checkLoginStatus() {
   if (!savedToken) {
     const workerRunning = await isWorkerRunning();
     const status = await readJson(STATUS_FILE, null);
+    const derivedStatus = status && typeof status.status === "string"
+      ? status.status
+      : workerRunning
+        ? "waiting_for_scan"
+        : "logged_out";
     return {
       ok: true,
       isLoggedIn: false,
-      status: workerRunning ? "waiting_for_scan" : "logged_out",
+      status: derivedStatus,
+      statusText: getStatusText(derivedStatus),
       qrcodePath: fileExists(QR_IMAGE_FILE) ? QR_IMAGE_FILE : null,
       lastStatus: status
     };
@@ -399,6 +454,7 @@ async function checkLoginStatus() {
       ok: true,
       isLoggedIn,
       status: phase,
+      statusText: getStatusText(phase),
       currentUrl,
       userToken: isLoggedIn ? cookie.value : null,
       qrcodePath: fileExists(QR_IMAGE_FILE) ? QR_IMAGE_FILE : null
@@ -437,6 +493,7 @@ async function getLoginQrcode(args) {
     ok: true,
     isLoggedIn: false,
     status: latestStatus ? latestStatus.status : "waiting_for_scan",
+    statusText: getStatusText(latestStatus ? latestStatus.status : "waiting_for_scan"),
     timeout: latestStatus && latestStatus.timeoutSeconds ? `${latestStatus.timeoutSeconds}s` : `${DEFAULT_TIMEOUT_SECONDS}s`,
     qrcodePath: QR_IMAGE_FILE,
     img: qrBase64.trim(),
@@ -506,6 +563,7 @@ async function loginFlow(args = {}) {
     return {
       ok: true,
       phase: "waiting_for_shop_selection",
+      statusText: getStatusText("waiting_for_shop_selection"),
       done: false,
       message: "扫码已完成，还差最后一步选店。请让用户回复店铺编号、店铺号或 accountUserId，我会继续自动登录。",
       shops: shopsResult.shops
@@ -524,6 +582,7 @@ async function loginFlow(args = {}) {
   return {
     ok: true,
     phase: "waiting_for_scan",
+    statusText: getStatusText("waiting_for_scan"),
     done: false,
     message: "请先扫码登录；扫码完成后我会继续帮你列出可选店铺。",
     qrcodePath: qrcodeResult.qrcodePath,
@@ -688,6 +747,21 @@ async function selectShop(args = {}) {
       sameSite: "Lax"
     }
   ]);
+  await writeJson(STATE_FILE, {
+    cookies: [
+      {
+        name: USER_TOKEN_COOKIE,
+        value: userToken,
+        domain: ".pc.eshetang.com",
+        path: "/",
+        expires: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+        httpOnly: false,
+        secure: false,
+        sameSite: "Lax"
+      }
+    ],
+    origins: []
+  });
   await writeJson(STATUS_FILE, {
     ...(await readJson(STATUS_FILE, {})),
     status: "logged_in",
