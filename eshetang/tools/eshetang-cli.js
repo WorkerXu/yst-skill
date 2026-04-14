@@ -22,6 +22,7 @@ const LOGIN_URL = "https://pc.eshetang.com/account/login?redirect=%2F";
 const HOME_URL = "https://pc.eshetang.com/";
 const ACCOUNT_LIST_PATH = "/account/list";
 const DEFAULT_TIMEOUT_SECONDS = 240;
+const LOCAL_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const QR_SELECTOR = 'img[alt="qrcode"]';
 const USER_TOKEN_COOKIE = "userToken";
 const DEFAULT_BFF_BASE_URL = "https://bff.eshetang.com";
@@ -261,6 +262,36 @@ function getStatusText(status) {
   }
 }
 
+function computeLocalTokenExpiresAt(baseTime = Date.now()) {
+  return new Date(baseTime + LOCAL_TOKEN_TTL_MS).toISOString();
+}
+
+function computeLocalCookieExpires(baseTime = Date.now()) {
+  return Math.floor((baseTime + LOCAL_TOKEN_TTL_MS) / 1000);
+}
+
+function isLocalTokenExpired(tokenInfo) {
+  if (!tokenInfo || typeof tokenInfo !== "object") {
+    return true;
+  }
+
+  if (typeof tokenInfo.localExpiresAt === "string" && tokenInfo.localExpiresAt) {
+    const expiresAt = Date.parse(tokenInfo.localExpiresAt);
+    if (Number.isFinite(expiresAt)) {
+      return expiresAt <= Date.now();
+    }
+  }
+
+  if (typeof tokenInfo.updatedAt === "string" && tokenInfo.updatedAt) {
+    const updatedAt = Date.parse(tokenInfo.updatedAt);
+    if (Number.isFinite(updatedAt)) {
+      return updatedAt + LOCAL_TOKEN_TTL_MS <= Date.now();
+    }
+  }
+
+  return false;
+}
+
 async function delay(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -298,7 +329,20 @@ async function writePid(pid) {
 
 async function getSavedCookies() {
   const cookies = await readJson(COOKIES_FILE, []);
-  return Array.isArray(cookies) ? cookies : [];
+  if (!Array.isArray(cookies)) {
+    return [];
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  return cookies.filter((cookie) => {
+    if (!cookie || !cookie.name || !cookie.value) {
+      return false;
+    }
+    if (typeof cookie.expires === "number" && cookie.expires > 0) {
+      return cookie.expires > nowSeconds;
+    }
+    return true;
+  });
 }
 
 function extractUserTokenFromCookies(cookies) {
@@ -307,7 +351,7 @@ function extractUserTokenFromCookies(cookies) {
 
 async function getSavedToken() {
   const tokenInfo = await readJson(TOKEN_FILE, null);
-  if (tokenInfo && tokenInfo.userToken) {
+  if (tokenInfo && tokenInfo.userToken && !isLocalTokenExpired(tokenInfo)) {
     return tokenInfo;
   }
 
@@ -320,6 +364,7 @@ async function getSavedToken() {
     userToken: cookie.value,
     domain: cookie.domain || null,
     expires: cookie.expires || null,
+    localExpiresAt: computeLocalTokenExpiresAt(),
     source: "cookies.json",
     updatedAt: safeDateString()
   };
@@ -334,11 +379,13 @@ async function saveSessionArtifacts(context, extra = {}) {
   await writeJson(COOKIES_FILE, cookies);
 
   if (tokenCookie && tokenCookie.value) {
+    const now = Date.now();
     await writeJson(TOKEN_FILE, {
       userToken: tokenCookie.value,
       domain: tokenCookie.domain || null,
       expires: tokenCookie.expires || null,
-      updatedAt: safeDateString(),
+      localExpiresAt: computeLocalTokenExpiresAt(now),
+      updatedAt: safeDateString(new Date(now)),
       ...extra
     });
   }
@@ -373,13 +420,14 @@ async function hydrateContextAuth(context) {
 
   const tokenInfo = await readJson(TOKEN_FILE, null);
   if (tokenInfo && tokenInfo.userToken) {
+    const now = Date.now();
     await context.addCookies([
       {
         name: USER_TOKEN_COOKIE,
         value: tokenInfo.userToken,
         domain: ".pc.eshetang.com",
         path: "/",
-        expires: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+        expires: computeLocalCookieExpires(now),
         httpOnly: false,
         secure: false,
         sameSite: "Lax"
@@ -726,6 +774,7 @@ async function selectShop(args = {}) {
     userToken,
     domain: ".pc.eshetang.com",
     source: "select_shop_api",
+    localExpiresAt: computeLocalTokenExpiresAt(),
     updatedAt: safeDateString(),
     accountUserId,
     scanToken
@@ -741,7 +790,7 @@ async function selectShop(args = {}) {
       value: userToken,
       domain: ".pc.eshetang.com",
       path: "/",
-      expires: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+      expires: computeLocalCookieExpires(),
       httpOnly: false,
       secure: false,
       sameSite: "Lax"
@@ -754,7 +803,7 @@ async function selectShop(args = {}) {
         value: userToken,
         domain: ".pc.eshetang.com",
         path: "/",
-        expires: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+        expires: computeLocalCookieExpires(),
         httpOnly: false,
         secure: false,
         sameSite: "Lax"
