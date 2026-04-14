@@ -13,11 +13,12 @@
 ## workflow
 
 1. 环境检查
-2. 打开登录页并生成二维码
-3. 等待用户扫码
-4. 如存在多店铺，列出店铺并选店
-5. 保存最终 `userToken`
-6. 返回当前登录状态
+2. 获取登录二维码
+3. 等待用户扫码并检查当前阶段
+4. 如进入待选店阶段，读取店铺候选
+5. 选择店铺并换取最终 `userToken`
+6. 校验登录完成
+7. 返回当前登录状态
 
 ## flow
 
@@ -25,11 +26,21 @@
 
 - 确认本地 Node、npm、jq、Playwright 和 Chromium 可用
 - 如果依赖缺失，先执行 `./scripts/install-check.sh`
+- 推荐先使用工具 `tool.get_integration_status`
+- 如果环境未就绪，不要继续执行登录二维码、状态检查、选店或读取 `userToken`
 
-### Step 2: 打开登录页并生成二维码
+### Step 2: 获取登录二维码
 
-- 使用 `./scripts/login.sh` 或 `./scripts/tool-call.sh login_flow`
-- 调用登录二维码工具后，先读取返回的 `qrcodePath` 或 `img`
+- 使用工具 `tool.get_login_qrcode`
+- `tool.get_login_qrcode` 的作用是：
+  - 启动二维码后台等待流程
+  - 返回二维码图片
+  - 返回当前阶段，通常是 `waiting_for_scan`
+- 工具返回后，先读取返回中的：
+  - `status`
+  - `statusText`
+  - `qrcodePath`
+  - `img`
 - agent 不得假定原始二维码路径一定能在当前聊天宿主中直接显示
 - agent 必须先把二维码图片复制到当前工作区中的稳定位置，再尝试在聊天中展示该工作区副本
 - 如果当前宿主不能直接显示图片，agent 必须立即提供降级方案：
@@ -38,15 +49,70 @@
   - 告诉用户扫码完成后下一步做什么
 - 只有在二维码已经成功提供给用户后，才进入等待扫码阶段
 
-### Step 3: 选店并保存 `userToken`
+### Step 3: 等待用户扫码并检查当前阶段
 
-- 如果扫码账号存在多店铺，先列出店铺并让用户选择
-- 选店后换取最终 `userToken`
-- 保存后才算登录完成
+- 在二维码已经提供给用户后，使用工具 `tool.check_login_status` 或 `tool.login_flow` 检查登录流程进入到哪一阶段
+- 如果返回 `waiting_for_scan`：
+  - 说明二维码已生成，但用户尚未完成扫码
+  - 此时不要进入选店或读取最终 `userToken`
+- 如果返回 `waiting_for_shop_selection`：
+  - 说明用户已扫码成功，但还没有选店
+  - 此时进入 Step 4
+- 如果返回 `logged_in`：
+  - 说明已经拿到最终登录态
+  - 可以直接进入 Step 6
+- 如果返回 `logged_out`、`timed_out` 或 `error`：
+  - 说明当前登录流程不可继续
+  - 必须向用户说明当前阶段并决定是否重新获取二维码
 
-### Step 4: 返回当前登录状态
+### Step 4: 如进入待选店阶段，读取店铺候选
 
-- 使用 `./scripts/status.sh` 或 `./scripts/user-token.sh` 查看当前状态
+- 当 Step 3 返回 `waiting_for_shop_selection` 时，使用工具 `tool.list_shops`
+- `tool.list_shops` 的作用是：
+  - 读取扫码账号下可选的店铺列表
+  - 返回可供用户确认的候选店铺
+- 候选店铺至少会包含：
+  - `index`
+  - `accountUserId`
+  - `enterpriseNo`
+  - `name`
+- 如果只有一个候选店铺，也不能跳过选店动作；必须明确按该候选继续
+- 如果存在多个候选店铺：
+  - 必须让用户确认要进入哪一个店铺
+  - 如果当前 agent 支持 UI 选择框，必须优先使用 UI 选择框
+  - 如果不支持 UI 选择框，但支持内置 HTML 表单，必须使用内置 HTML 表单
+  - 只有 UI 选择框和内置 HTML 表单都不支持时，才退回文本列举候选项
+
+### Step 5: 选择店铺并换取最终 `userToken`
+
+- 用户确认店铺后，使用工具 `tool.select_shop`
+- `tool.select_shop` 支持以下任一种入参完成选店：
+  - `account_user_id`
+  - `shop_index`
+  - `enterprise_no`
+- `tool.select_shop` 的作用是：
+  - 以扫码得到的临时登录态为前提，选中具体店铺
+  - 换取最终 `userToken`
+  - 保存最终登录态
+- 只有 `tool.select_shop` 成功后，登录流程才算进入最终完成态
+
+### Step 6: 校验登录完成
+
+- 使用工具 `tool.get_user_token` 校验是否已经拿到最终 `userToken`
+- 如果需要同时返回当前阶段，也可以使用工具 `tool.check_login_status`
+- 校验通过的标准是：
+  - 能读取到有效 `userToken`
+  - 当前状态为 `logged_in`
+- 如果仍然是 `waiting_for_shop_selection`：
+  - 说明扫码已完成，但最终选店未完成
+  - 不能把当前状态当作登录完成
+
+### Step 7: 返回当前登录状态
+
+- 返回登录阶段、中文状态、是否已拿到最终 `userToken`
+- 推荐使用：
+  - 工具 `tool.check_login_status` 查看当前阶段
+  - 工具 `tool.get_user_token` 查看最终 `userToken`
 
 ## 二维码展示与降级规则
 
@@ -105,6 +171,165 @@ flowchart TD
 - 校验规则：
   - 必须通过 `./scripts/user-token.sh` 或 `./scripts/tool-call.sh get_user_token` 读取到有效值
   - 未完成选店时，登录态不算最终完成
+
+## 状态转移规则
+
+### `waiting_for_scan`
+
+- 表示二维码已经生成，当前仍在等待用户扫码
+- 这个阶段只能继续等待扫码或重新生成二维码
+- 不能直接列店铺
+- 不能直接读取最终 `userToken`
+
+### `waiting_for_shop_selection`
+
+- 表示用户已经扫码成功，但当前账号存在需要确认的店铺
+- 这个阶段必须先使用工具 `tool.list_shops` 读取候选店铺
+- 用户确认后，再使用工具 `tool.select_shop`
+- 在完成选店前，不得把当前状态当作登录完成
+
+### `logged_in`
+
+- 表示已经完成选店并换取到最终 `userToken`
+- 这个阶段才允许进入其他开放能力
+
+### `logged_out`
+
+- 表示当前没有可用的最终登录态
+- 必须重新开始二维码登录流程
+
+### `timed_out`
+
+- 表示二维码已过期
+- 必须重新获取二维码
+
+### `error`
+
+- 表示登录流程或状态检查失败
+- 必须先向用户说明错误，再决定是否重新开始登录流程
+
+## 工具定义
+
+### `tool.get_integration_status`
+
+- 作用：
+  - 检查环境依赖和当前登录集成状态
+- 推荐调用：
+
+```bash
+./scripts/tool-call.sh get_integration_status
+```
+
+- 结果使用规则：
+  - 如果环境未就绪，不要继续后续登录步骤
+
+### `tool.get_login_qrcode`
+
+- 作用：
+  - 获取二维码并启动后台等待扫码流程
+- 推荐调用：
+
+```bash
+./scripts/tool-call.sh get_login_qrcode
+```
+
+- 入参：
+  - 可选 `timeout_seconds`
+- 出参重点：
+  - `status`
+  - `statusText`
+  - `qrcodePath`
+  - `img`
+- 结果使用规则：
+  - 读取二维码后，先完成展示或降级展示，再等待用户扫码
+
+### `tool.login_flow`
+
+- 作用：
+  - 对话式登录流程入口，自动判断当前应进入扫码、选店还是直接完成
+- 推荐调用：
+
+```bash
+./scripts/tool-call.sh login_flow
+```
+
+- 结果使用规则：
+  - 如果返回 `waiting_for_scan`，按二维码流程继续
+  - 如果返回 `waiting_for_shop_selection`，进入店铺候选确认
+  - 如果返回 `logged_in`，说明登录已完成
+
+### `tool.check_login_status`
+
+- 作用：
+  - 检查当前登录阶段
+- 推荐调用：
+
+```bash
+./scripts/tool-call.sh check_login_status
+```
+
+- 出参重点：
+  - `status`
+  - `statusText`
+  - `isLoggedIn`
+- 结果使用规则：
+  - 用于判断当前是待扫码、待选店、已登录还是已失效
+
+### `tool.list_shops`
+
+- 作用：
+  - 读取扫码成功后的店铺候选列表
+- 推荐调用：
+
+```bash
+./scripts/tool-call.sh list_shops
+```
+
+- 出参重点：
+  - `shops[].index`
+  - `shops[].accountUserId`
+  - `shops[].enterpriseNo`
+  - `shops[].name`
+- 结果使用规则：
+  - 把返回结果作为用户选店候选
+  - 未确认候选前，不得继续调用 `tool.select_shop`
+
+### `tool.select_shop`
+
+- 作用：
+  - 根据用户确认的店铺，换取最终 `userToken`
+- 推荐调用示例：
+
+```bash
+./scripts/tool-call.sh select_shop '{"shop_index":1}'
+```
+
+```bash
+./scripts/tool-call.sh select_shop '{"account_user_id":12345}'
+```
+
+```bash
+./scripts/tool-call.sh select_shop '{"enterprise_no":"SAAS20240920889475"}'
+```
+
+- 入参：
+  - `shop_index` 或 `account_user_id` 或 `enterprise_no`
+- 结果使用规则：
+  - 只有成功后，才能认为已完成最终选店和换 token
+
+### `tool.get_user_token`
+
+- 作用：
+  - 读取已保存的最终 `userToken`
+- 推荐调用：
+
+```bash
+./scripts/tool-call.sh get_user_token
+```
+
+- 结果使用规则：
+  - 能读取到有效 `userToken` 才算登录最终完成
+  - 读取失败时，要结合 `tool.check_login_status` 判断当前是待扫码、待选店还是已失效
 
 ## 本地脚本
 
